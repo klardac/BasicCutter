@@ -1,5 +1,7 @@
 # Basic Cutter
 
+Sürüm 1.0.0 · [github.com/klardac/BasicCutter](https://github.com/klardac/BasicCutter) · Lisans: CC BY-NC 4.0 (bkz. `LICENSE.md`)
+
 Unity 6 için level design aracı. Pencere ve kapıların duvarın içinde kalan kısmını keser ve deliğin iç yüzeylerini (pervazları) duvarın materyaliyle kapatır. Kesimler geri alınabilir: orijinal mesh her zaman saklanır.
 
 - Built-in, URP ve HDRP ile çalışır (sadece mesh üretir, shader veya pipeline kodu yoktur).
