@@ -122,8 +122,11 @@ namespace BasicCutter.EditorTools
     }
 
     /// <summary>
-    /// Embedded storage: when scene objects are saved as a new prefab, their scene-stored meshes cannot
-    /// go with them. This re-cuts such prefabs right after import and stores the meshes inside the file.
+    /// Embedded storage: when scene objects are saved as a new prefab (or a prefab instance's changes are
+    /// applied), their scene-stored meshes cannot go with them. This re-cuts such prefabs right after
+    /// import and stores the meshes inside the file; applied meshes are found by their ID (see
+    /// <see cref="AppliedMeshes"/>). Runs in every storage mode: applied meshes made in Embedded mode stay
+    /// in their scenes after the setting changes.
     /// </summary>
     internal sealed class PrefabMeshFixer : AssetPostprocessor
     {
@@ -131,7 +134,6 @@ namespace BasicCutter.EditorTools
 
         static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom)
         {
-            if (BasicCutterSettings.instance.meshStorage != MeshStorage.Embedded) return;
             bool any = false;
             foreach (var p in imported)
                 if (p.EndsWith(".prefab", System.StringComparison.OrdinalIgnoreCase) && queue.Add(p)) any = true;
@@ -150,7 +152,7 @@ namespace BasicCutter.EditorTools
         {
             foreach (var cm in root.GetComponentsInChildren<CuttableMesh>(true))
             {
-                if (cm.originalMesh != null && cm.sourceMesh == null) return true; // applied cuts stayed in the scene
+                if (AppliedMeshes.NeedsRecovery(cm, requireFound: true)) return true;
                 if (cm.state == CutState.Excluded || string.IsNullOrEmpty(cm.signature)) continue;
                 var mf = cm.GetComponent<MeshFilter>();
                 if (cm.cutMesh == null || mf == null || mf.sharedMesh == null) return true;
@@ -166,7 +168,13 @@ namespace BasicCutter.EditorTools
         internal static void Fix(string path)
         {
             var asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            if (asset == null || !NeedsFix(asset)) return;
+            if (asset == null) return;
+            if (!NeedsFix(asset))
+            {
+                // a pending prefab that came in from elsewhere (version control) is remembered too
+                AppliedMeshes.SetPending(path, AppliedMeshes.HasPending(asset));
+                return;
+            }
             var root = PrefabUtility.LoadPrefabContents(path);
             try
             {
@@ -181,6 +189,8 @@ namespace BasicCutter.EditorTools
             {
                 PrefabUtility.UnloadPrefabContents(root);
             }
+            AppliedMeshes.RemoveUnused(path);
+            AppliedMeshes.SetPending(path, AppliedMeshes.HasPending(AssetDatabase.LoadAssetAtPath<GameObject>(path)));
         }
     }
 }

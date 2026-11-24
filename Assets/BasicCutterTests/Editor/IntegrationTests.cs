@@ -23,6 +23,7 @@ namespace BasicCutter.Tests
             s.outputFolder = TempFolder + "/Generated";
             s.liveUpdate = false; // tests drive the sync explicitly
             s.meshStorage = MeshStorage.AssetFolder; // most tests check the asset files; embedded storage has its own tests
+            wallAsset = frameAsset = null;
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
         }
 
@@ -554,40 +555,151 @@ namespace BasicCutter.Tests
             AssertHoles(wall, 2, "A cuts live again after the discard");
         }
 
-        [Test]
-        public void ApplyCuts_EmbeddedInScene_NewPrefab_IsCutAgainFromTheOriginal()
+        // ------------------------------------------------------------------ applied meshes in prefabs (Embedded)
+
+        Mesh wallAsset, frameAsset;
+
+        /// <summary>A house (wall + window) whose meshes are asset files, as a prefab's would be.</summary>
+        GameObject MakeHouse(Vector3 windowPos)
         {
-            BasicCutterSettings.instance.meshStorage = MeshStorage.Embedded;
-            AssetDatabase.CreateFolder("Assets", "BasicCutterTestTemp");
-            var wallMesh = ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall");
-            AssetDatabase.CreateAsset(wallMesh, TempFolder + "/Wall.asset");
-            var frame = ProceduralMeshes.Frame(ProceduralMeshes.Rect(1f, 1.2f), ProceduralMeshes.Rect(0.9f, 1.1f), 0.1f, "Frame");
-            AssetDatabase.CreateAsset(frame, TempFolder + "/Frame.asset");
+            if (wallAsset == null)
+            {
+                if (!AssetDatabase.IsValidFolder(TempFolder)) AssetDatabase.CreateFolder("Assets", "BasicCutterTestTemp");
+                wallAsset = ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall");
+                AssetDatabase.CreateAsset(wallAsset, TempFolder + "/Wall.asset");
+                frameAsset = ProceduralMeshes.Frame(ProceduralMeshes.Rect(1f, 1.2f), ProceduralMeshes.Rect(0.9f, 1.1f), 0.1f, "Frame");
+                AssetDatabase.CreateAsset(frameAsset, TempFolder + "/Frame.asset");
+            }
             var house = new GameObject("House");
-            var wall = MakeObject("Wall", wallMesh, new Vector3(0, 1.5f, 0), house.transform);
+            MakeObject("Wall", wallAsset, new Vector3(0, 1.5f, 0), house.transform).transform.localPosition = new Vector3(0, 1.5f, 0);
             var window = new GameObject("Window");
             window.transform.SetParent(house.transform, false);
-            window.transform.localPosition = new Vector3(0.5f, 1.6f, 0);
+            window.transform.localPosition = windowPos;
             window.AddComponent<MeshCutter>();
-            MakeObject("Frame", frame, Vector3.zero, window.transform).transform.localPosition = Vector3.zero;
+            MakeObject("Frame", frameAsset, Vector3.zero, window.transform).transform.localPosition = Vector3.zero;
+            return house;
+        }
+
+        static CuttableMesh AssetWall(string path) =>
+            AssetDatabase.LoadAssetAtPath<GameObject>(path).transform.Find("Wall").GetComponent<CuttableMesh>();
+
+        [Test]
+        public void ApplyCuts_EmbeddedInScene_PrefabSavedFromCode_KeepsTheAppliedMesh()
+        {
+            BasicCutterSettings.instance.meshStorage = MeshStorage.Embedded;
+            var house = MakeHouse(new Vector3(0.5f, 1.6f, 0));
             CutterSystem.SyncNow();
-            CutterSystem.ApplyCuts(new[] { wall.GetComponent<CuttableMesh>() });
+            var cm = house.GetComponentInChildren<CuttableMesh>();
+            CutterSystem.ApplyCuts(new[] { cm });
+            Assert.IsNotEmpty(cm.appliedId);
+            // the window is gone: cutting the prefab again could not bring the hole back
+            Object.DestroyImmediate(house.transform.Find("Window").gameObject);
+            CutterSystem.SyncNow();
+
+            string path = TempFolder + "/House.prefab";
+            PrefabUtility.SaveAsPrefabAsset(house, path); // from code, not connected to the scene object
+            Assert.IsTrue(PrefabMeshFixer.NeedsFix(AssetDatabase.LoadAssetAtPath<GameObject>(path)), "the scene mesh could not be referenced");
+            PrefabMeshFixer.Fix(path);
+
+            var assetCm = AssetWall(path);
+            Assert.IsTrue(assetCm.HasAppliedCuts);
+            Assert.IsFalse(assetCm.AppliedMeshMissing);
+            Assert.AreEqual(cm.appliedId, assetCm.appliedId);
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(assetCm.SourceMesh), "the applied mesh is inside the prefab file");
+            var shown = assetCm.GetComponent<MeshFilter>().sharedMesh;
+            Assert.AreEqual(WallVolume - HoleVolume, SourceMesh.Read(shown).Volume(), 1e-3, "the applied hole is kept");
+            Assert.IsFalse(PrefabMeshFixer.NeedsFix(AssetDatabase.LoadAssetAtPath<GameObject>(path)));
+        }
+
+        [Test]
+        public void ApplyAll_FromOneOfTwoInstances_StoresThatInstancesAppliedMesh()
+        {
+            BasicCutterSettings.instance.meshStorage = MeshStorage.Embedded;
+            string path = TempFolder + "/House.prefab";
+            var source = MakeHouse(new Vector3(-1f, 1.5f, 0));
+            PrefabUtility.SaveAsPrefabAsset(source, path);
+            Object.DestroyImmediate(source);
+            PrefabMeshFixer.Fix(path);
+
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            var i1 = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+            var i2 = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+            i2.transform.position = new Vector3(0, 0, 10);
+            i2.transform.Find("Window").localPosition = new Vector3(1f, 1.5f, 0); // its hole is somewhere else
+            CutterSystem.SyncNow();
+            var cm1 = i1.GetComponentInChildren<CuttableMesh>();
+            var cm2 = i2.GetComponentInChildren<CuttableMesh>();
+            CutterSystem.ApplyCuts(new[] { cm1, cm2 });
+            Assert.AreNotEqual(cm1.appliedId, cm2.appliedId);
+            ulong hash1 = SourceMesh.Read(cm1.SourceMesh).contentHash, hash2 = SourceMesh.Read(cm2.SourceMesh).contentHash;
+            Assert.AreNotEqual(hash1, hash2);
+
+            PrefabUtility.ApplyPrefabInstance(i1, InteractionMode.AutomatedAction);
+            PrefabMeshFixer.Fix(path); // normally runs right after the import
+
+            var assetCm = AssetWall(path);
+            Assert.AreEqual(cm1.appliedId, assetCm.appliedId, "the ID came with Apply All");
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(assetCm.SourceMesh));
+            Assert.AreEqual(hash1, SourceMesh.Read(assetCm.SourceMesh).contentHash, "the mesh of the instance that was applied, not the other one");
+            Assert.AreEqual(WallVolume - HoleVolume, SourceMesh.Read(assetCm.GetComponent<MeshFilter>().sharedMesh).Volume(), 1e-3);
+        }
+
+        [Test]
+        public void AppliedMesh_NotLoaded_PrefabWaits_AndIsRepairedWhenItsSceneOpens()
+        {
+            BasicCutterSettings.instance.meshStorage = MeshStorage.Embedded;
+            var house = MakeHouse(new Vector3(0.5f, 1.6f, 0));
+            CutterSystem.SyncNow();
+            CutterSystem.ApplyCuts(new[] { house.GetComponentInChildren<CuttableMesh>() });
+            Object.DestroyImmediate(house.transform.Find("Window").gameObject);
+            CutterSystem.SyncNow();
+            string scenePath = TempFolder + "/Applied.unity";
+            Assert.IsTrue(EditorSceneManager.SaveScene(house.scene, scenePath));
+            string path = TempFolder + "/House.prefab";
+            PrefabUtility.SaveAsPrefabAsset(house, path);
+
+            // the scene closes and the session forgets the mesh before the prefab is fixed
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            AppliedMeshes.ClearForTests();
+            EditorUtility.UnloadUnusedAssetsImmediate();
+            UnityEngine.TestTools.LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("Open the scene where Apply Cuts was used"));
+            PrefabMeshFixer.Fix(path);
+
+            var assetCm = AssetWall(path);
+            Assert.IsTrue(assetCm.AppliedMeshMissing, "waits for its scene");
+            Assert.AreEqual(WallVolume, SourceMesh.Read(assetCm.GetComponent<MeshFilter>().sharedMesh).Volume(), 1e-3, "temporary: the original (no window left)");
+            CollectionAssert.Contains(AppliedMeshes.PendingPrefabs, path);
+            Assert.IsFalse(PrefabMeshFixer.NeedsFix(AssetDatabase.LoadAssetAtPath<GameObject>(path)), "no fix loop while the mesh is missing");
+
+            EditorSceneManager.OpenScene(scenePath);
+            AppliedMeshes.RepairPending(); // normally right after the scene opens
+
+            assetCm = AssetWall(path);
+            Assert.IsFalse(assetCm.AppliedMeshMissing, "repaired");
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(assetCm.SourceMesh));
+            Assert.AreEqual(WallVolume - HoleVolume, SourceMesh.Read(assetCm.GetComponent<MeshFilter>().sharedMesh).Volume(), 1e-3, "the applied hole is back");
+            CollectionAssert.DoesNotContain(AppliedMeshes.PendingPrefabs, path);
+        }
+
+        [Test]
+        public void AppliedMesh_WithoutID_FromAnOlderVersion_IsCutAgainFromTheOriginal()
+        {
+            BasicCutterSettings.instance.meshStorage = MeshStorage.Embedded;
+            var house = MakeHouse(new Vector3(0.5f, 1.6f, 0));
+            CutterSystem.SyncNow();
+            var cm = house.GetComponentInChildren<CuttableMesh>();
+            CutterSystem.ApplyCuts(new[] { cm });
+            cm.appliedId = ""; // 1.1.0 data
 
             string path = TempFolder + "/House.prefab";
             PrefabUtility.SaveAsPrefabAsset(house, path);
-            var asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            Assert.IsTrue(PrefabMeshFixer.NeedsFix(asset), "the applied mesh stayed in the scene");
-            UnityEngine.TestTools.LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("applied cuts of 'Wall'"));
+            UnityEngine.TestTools.LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("older version"));
             PrefabMeshFixer.Fix(path);
 
-            asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            var assetCm = asset.transform.Find("Wall").GetComponent<CuttableMesh>();
-            Assert.AreSame(wallMesh, assetCm.SourceMesh);
+            var assetCm = AssetWall(path);
+            Assert.AreSame(wallAsset, assetCm.SourceMesh);
             Assert.IsFalse(assetCm.HasAppliedCuts);
-            var assetWall = assetCm.GetComponent<MeshFilter>().sharedMesh;
-            Assert.AreEqual(path, AssetDatabase.GetAssetPath(assetWall));
-            Assert.AreEqual(WallVolume - HoleVolume, SourceMesh.Read(assetWall).Volume(), 1e-3, "the window in the prefab cuts it again");
-            Assert.IsFalse(PrefabMeshFixer.NeedsFix(asset));
+            Assert.AreEqual(WallVolume - HoleVolume, SourceMesh.Read(assetCm.GetComponent<MeshFilter>().sharedMesh).Volume(), 1e-3, "the window in the prefab cuts it again");
         }
     }
 }

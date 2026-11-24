@@ -37,7 +37,7 @@ namespace BasicCutter.EditorTools
             }
             using (new EditorGUILayout.HorizontalScope())
             {
-                bool canApply = walls.Any(w => w.state != CutState.Excluded && w.cutMesh != null && w.TryGetComponent(out MeshFilter f) && f.sharedMesh == w.cutMesh);
+                bool canApply = walls.Any(w => w.state != CutState.Excluded && !w.appliedMissing && w.cutMesh != null && w.TryGetComponent(out MeshFilter f) && f.sharedMesh == w.cutMesh);
                 using (new EditorGUI.DisabledScope(!canApply))
                     if (GUILayout.Button(new GUIContent("Apply Cuts", "Make the current holes part of this wall's mesh. They stay when their windows move or are deleted, and new windows cut on top of them. The wall becomes live.")))
                     {
@@ -63,7 +63,10 @@ namespace BasicCutter.EditorTools
                         : "Reverted: the original mesh is shown and cutters ignore this object.", MessageType.Info);
                     break;
             }
-            if (cm.HasAppliedCuts)
+            if (cm.AppliedMeshMissing)
+                EditorGUILayout.HelpBox("The applied mesh of this prefab was made in a scene that is not open, so a temporary cut of the original mesh is shown. " +
+                                        "Open the scene where Apply Cuts was used on it and the prefab is repaired.", MessageType.Warning);
+            else if (cm.HasAppliedCuts)
             {
                 int n = cm.appliedCutters.Count(c => c != null);
                 EditorGUILayout.HelpBox($"Applied cuts: the holes of earlier windows are part of this wall's mesh{(n > 0 ? $" ({n} window(s) applied, they no longer cut it)" : "")}. Discard Applied Cuts goes back to the original mesh.", MessageType.None);

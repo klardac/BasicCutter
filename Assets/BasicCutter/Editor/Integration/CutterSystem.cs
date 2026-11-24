@@ -237,22 +237,9 @@ namespace BasicCutter.EditorTools
             foreach (var cm in root.GetComponentsInChildren<CuttableMesh>(true))
             {
                 var mf = cm.GetComponent<MeshFilter>();
-                // applied cuts stored in a scene cannot go into a prefab file: cut again from the original mesh
-                if (cm.originalMesh != null && cm.sourceMesh == null)
-                {
-                    var r = cm.GetComponent<Renderer>();
-                    if (r != null && cm.originalMaterialCount > 0 && r.sharedMaterials.Length > cm.originalMaterialCount)
-                        r.sharedMaterials = r.sharedMaterials.Take(cm.originalMaterialCount).ToArray();
-                    cm.sourceMesh = cm.originalMesh;
-                    cm.originalMesh = null;
-                    cm.originalMaterialCount = 0;
-                    cm.addedMaterials = 0;
-                    cm.appliedCutters.Clear();
-                    cm.cutBy.Clear();
-                    cm.cutByKnown = false;
-                    cm.cutMesh = null;
-                    Debug.LogWarning($"[Basic Cutter] '{prefabPath}': the applied cuts of '{cm.name}' were stored in the scene and cannot be saved into the prefab, so it was cut again from its original mesh with the windows inside the prefab.");
-                }
+                // an applied mesh stored in a scene cannot be referenced from a prefab file: find it by its ID
+                if (AppliedMeshes.NeedsRecovery(cm, requireFound: false))
+                    RecoverAppliedMesh(cm, prefabPath);
                 // a baked wall that lost its mesh is cut once more from its current windows
                 if (cm.state == CutState.Frozen && (cm.cutMesh == null || mf == null || mf.sharedMesh == null)) { cm.state = CutState.Live; frozen.Add(cm); }
                 if (cm.cutMesh == null) cm.signature = "";
@@ -271,11 +258,94 @@ namespace BasicCutter.EditorTools
             MarkDirty();
         }
 
+        /// <summary>
+        /// Stores the applied mesh of a prefab's wall inside the prefab file. When it cannot be found, the wall
+        /// shows a temporary cut of its original mesh (by all its windows) until the mesh's scene is opened.
+        /// </summary>
+        static void RecoverAppliedMesh(CuttableMesh cm, string prefabPath)
+        {
+            var r = cm.GetComponent<Renderer>();
+            if (string.IsNullOrEmpty(cm.appliedId))
+            {
+                // applied by 1.1.0, which gave the mesh no ID: it cannot be found, cut again from the original
+                if (r != null && cm.originalMaterialCount > 0 && r.sharedMaterials.Length > cm.originalMaterialCount)
+                    r.sharedMaterials = r.sharedMaterials.Take(cm.originalMaterialCount).ToArray();
+                cm.sourceMesh = cm.originalMesh;
+                cm.originalMesh = null;
+                cm.originalMaterialCount = 0;
+                cm.addedMaterials = 0;
+                cm.appliedCutters.Clear();
+                cm.cutBy.Clear();
+                cm.cutByKnown = false;
+                cm.cutMesh = null;
+                cm.signature = "";
+                Debug.LogWarning($"[Basic Cutter] '{prefabPath}': the applied cuts of '{cm.name}' were stored in the scene by an older version and cannot be found, so it was cut again from its original mesh with the windows inside the prefab.");
+                return;
+            }
+            var found = AppliedMeshes.Find(cm.appliedId);
+            if (found != null)
+            {
+                cm.sourceMesh = AppliedMeshes.StoreIn(found, prefabPath);
+                if (cm.appliedMissing)
+                {
+                    // the applied mesh's jamb material slots come back
+                    if (r != null)
+                    {
+                        var mats = r.sharedMaterials;
+                        int keep = cm.originalMaterialCount > 0 ? cm.originalMaterialCount : Math.Max(0, mats.Length - cm.addedMaterials);
+                        r.sharedMaterials = mats.Take(keep).Concat(cm.heldMaterials).ToArray();
+                    }
+                    cm.heldMaterials.Clear();
+                    cm.addedMaterials = 0;
+                    cm.appliedMissing = false;
+                }
+                cm.cutMesh = null;
+                cm.signature = "";
+                cm.cutBy.Clear();
+                cm.cutByKnown = false;
+                ShowSource(cm);
+                return;
+            }
+            if (!cm.appliedMissing)
+            {
+                cm.appliedMissing = true;
+                cm.heldMaterials.Clear();
+                if (r != null)
+                {
+                    var mats = r.sharedMaterials;
+                    int baseCount = Math.Max(0, mats.Length - cm.addedMaterials);
+                    if (cm.originalMaterialCount > 0 && baseCount > cm.originalMaterialCount)
+                        cm.heldMaterials.AddRange(mats.Skip(cm.originalMaterialCount).Take(baseCount - cm.originalMaterialCount));
+                    if (cm.originalMaterialCount > 0 && mats.Length > cm.originalMaterialCount)
+                        r.sharedMaterials = mats.Take(cm.originalMaterialCount).ToArray();
+                }
+                cm.addedMaterials = 0;
+                cm.sourceMesh = cm.originalMesh;
+                cm.cutMesh = null;
+                cm.signature = "";
+                cm.cutBy.Clear();
+                cm.cutByKnown = false;
+                ShowSource(cm);
+            }
+            AppliedMeshes.WarnMissing(prefabPath, cm.name);
+        }
+
+        /// <summary>
+        /// Points the wall's mesh filter (and collider) at its new source, so the next cut does not take the
+        /// mesh it showed before for a mesh the user assigned by hand.
+        /// </summary>
+        static void ShowSource(CuttableMesh cm)
+        {
+            if (cm.TryGetComponent(out MeshFilter mf)) mf.sharedMesh = cm.sourceMesh;
+            if (cm.TryGetComponent(out MeshCollider col)) col.sharedMesh = cm.sourceMesh;
+        }
+
         static void Run(Scope scope)
         {
             // openings applied into a wall stay as they are, together with their trims
+            // (not while the applied mesh is missing: then every window cuts the original mesh)
             foreach (var w in scope.walls)
-                if (w != null)
+                if (w != null && !w.appliedMissing)
                     foreach (var c in w.appliedCutters)
                         if (c != null) scope.frozen.Add(c);
 
@@ -304,7 +374,7 @@ namespace BasicCutter.EditorTools
                     // from the mesh, not Renderer.bounds: that one is stale until the next frame after a mesh change
                     if (!WorldBoundsOf(source, r.transform).Intersects(bounds)) continue;
                     if (r.GetComponentInParent<MeshCutter>(true) != null) continue; // windows, doors and their trims
-                    if (cm != null && cm.appliedCutters.Contains(cutter)) { status.applied.Add(r); continue; }
+                    if (cm != null && !cm.appliedMissing && cm.appliedCutters.Contains(cutter)) { status.applied.Add(r); continue; }
 
                     SourceMesh sm;
                     try { sm = SourceMesh.Get(source); }
@@ -660,6 +730,11 @@ namespace BasicCutter.EditorTools
             foreach (var cm in walls)
             {
                 if (cm == null) continue;
+                if (cm.appliedMissing)
+                {
+                    Debug.LogWarning($"[Basic Cutter] '{cm.name}' waits for its applied mesh (open the scene where Apply Cuts was used on it), so Apply Cuts is not used on it now.", cm);
+                    continue;
+                }
                 var mf = cm.GetComponent<MeshFilter>();
                 if (mf == null || cm.cutMesh == null || mf.sharedMesh != cm.cutMesh) continue;
                 var renderer = mf.GetComponent<Renderer>();
@@ -684,8 +759,13 @@ namespace BasicCutter.EditorTools
                 foreach (var c in cutters)
                     if (c != null && !cm.appliedCutters.Contains(c)) cm.appliedCutters.Add(c);
 
-                // the cut mesh becomes the base; the next cut writes a new one
-                cm.sourceMesh = cm.cutMesh;
+                // the cut mesh becomes the base; the next cut writes a new one. Its ID lets a prefab find it
+                // again when the mesh lives in the scene (Embedded storage).
+                var appliedMesh = cm.cutMesh;
+                cm.appliedId = AppliedMeshes.NewId();
+                if (!AssetDatabase.IsMainAsset(appliedMesh)) appliedMesh.name = AppliedMeshes.MeshName(cm.name, cm.appliedId);
+                AppliedMeshes.Remember(cm.appliedId, appliedMesh);
+                cm.sourceMesh = appliedMesh;
                 cm.cutMesh = null;
                 cm.addedMaterials = 0;      // the jamb material slots now belong to the base mesh
                 cm.cutBy.Clear();
@@ -723,6 +803,9 @@ namespace BasicCutter.EditorTools
                 cm.originalMesh = null;
                 cm.originalMaterialCount = 0;
                 cm.appliedCutters.Clear();
+                cm.appliedId = "";
+                cm.appliedMissing = false;
+                cm.heldMaterials.Clear();
                 cm.cutBy.Clear();
                 cm.cutByKnown = true;
                 cm.signature = "";

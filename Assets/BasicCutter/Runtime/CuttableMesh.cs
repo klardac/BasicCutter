@@ -60,6 +60,18 @@ namespace BasicCutter
         [SerializeField, HideInInspector]
         internal List<MeshCutter> appliedCutters = new List<MeshCutter>();
 
+        // identifies the applied mesh: a prefab that could not store a scene's mesh finds it again by this
+        [SerializeField, HideInInspector]
+        internal string appliedId = "";
+
+        // a prefab whose applied mesh was not found yet: it shows a temporary cut of originalMesh
+        [SerializeField, HideInInspector]
+        internal bool appliedMissing;
+
+        // jamb material slots of the applied mesh, set aside while appliedMissing
+        [SerializeField, HideInInspector]
+        internal List<Material> heldMaterials = new List<Material>();
+
         public Mesh SourceMesh => sourceMesh;
         public Mesh CutMesh => cutMesh;
         public CutState State => state;
@@ -69,5 +81,8 @@ namespace BasicCutter
 
         /// <summary>True when cuts were applied into this wall's base mesh.</summary>
         public bool HasAppliedCuts => originalMesh != null;
+
+        /// <summary>True when this prefab's applied mesh was lost and is waiting for its scene to be opened.</summary>
+        public bool AppliedMeshMissing => appliedMissing;
     }
 }

@@ -1,6 +1,6 @@
 # Basic Cutter
 
-Sürüm 1.1.0 · [github.com/klardac/BasicCutter](https://github.com/klardac/BasicCutter) · Lisans: CC BY-NC 4.0 (bkz. `LICENSE.md`)
+Sürüm 1.1.1 · [github.com/klardac/BasicCutter](https://github.com/klardac/BasicCutter) · Lisans: CC BY-NC 4.0 (bkz. `LICENSE.md`)
 
 Unity 6 için level design aracı. Pencere ve kapıların duvarın içinde kalan kısmını keser ve deliğin iç yüzeylerini (pervazları) duvarın materyaliyle kapatır. Kesimler geri alınabilir: orijinal mesh her zaman saklanır.
 
@@ -125,7 +125,9 @@ Bake edilmiş bir duvar yeni pencereleri yok sayar. Unbake edilirse duvar orijin
 - Bake edilmiş duvarda sadece bake anındaki pencereler işlenir. Sonradan bake edilmiş duvara konan pencere işlenmez; Apply Cuts'tan sonra canlı olarak keser. Böyle bir pencerenin inspector'ında duvarın bake edildiğini söyleyen bir uyarı görünür.
 - **Discard Applied Cuts**, Apply Cuts'tan önceki orijinal mesh'e döner. Sahnedeki pencereler duvarı yeniden canlı keser. Apply Cuts ve Discard, Ctrl+Z ile geri alınabilir.
 - Apply edilmiş duvar, kesicisi kalmasa bile Cuttable Mesh bileşenini korur, çünkü orijinal mesh'i o hatırlar.
-- **Embedded** modunda sahnede apply edilmiş bir duvardan yeni prefab yapılırsa, işlenmiş mesh sahneye ait olduğu için prefab'a taşınamaz. Prefab orijinal mesh'ten, içindeki pencerelerle yeniden kesilir ve konsola bir uyarı yazılır.
+- **Prefab'lar (Embedded modu):** İşlenmiş mesh sahnenin içinde saklanır ve prefab dosyası sahnedeki bir mesh'e referans veremez. Bunun yerine her Apply Cuts işlenmiş mesh'e bir ID verir; prefab bu ID'yi alır ve Basic Cutter mesh'i ID'siyle bulup prefab dosyasının içine kopyalar. Şu durumlarda kendiliğinden çalışır: sahnedeki objeyi sürükleyerek prefab yapmak, kodla `SaveAsPrefabAsset` ile kaydetmek ve bir prefab kopyasında **Overrides > Apply All**. Apply All hangi kopyadan yapıldıysa onun mesh'i alınır.
+- İşlenmiş mesh o an bellekte değilse (örneğin sahne prefab düzeltilmeden kapandıysa ve editör yeniden başlatıldıysa), prefab **bekliyor** olarak işaretlenir. Orijinal mesh'ten geçici bir kesim gösterir ve Cuttable Mesh'te bir uyarı görünür. Mesh'in bulunduğu sahne açıldığında prefab kendiliğinden onarılır.
+- 1.1.0 ile apply edilmiş duvarlara, sahneleri açıldığında bir ID verilir. Sahne kaydedilmeden 1.1.0 verisinden prefab yapılırsa prefab orijinal mesh'ten yeniden kesilir ve bir uyarı yazılır.
 
 ## Menü: Tools > Basic Cutter
 
