@@ -781,6 +781,28 @@ namespace BasicCutter.EditorTools
             return count;
         }
 
+        /// <summary>
+        /// Takes a window off the applied list of the walls it was applied into: its old hole stays in their
+        /// applied mesh, and the window cuts them live again where it is now. Returns how many walls changed.
+        /// </summary>
+        internal static int CutLiveAgain(MeshCutter cutter)
+        {
+            if (cutter == null) return 0;
+            var stage = StageUtility.GetStageHandle(cutter.gameObject);
+            var walls = stage.FindComponentsOfType<CuttableMesh>().Where(w => w != null && w.appliedCutters.Contains(cutter)).ToArray();
+            if (walls.Length == 0) return 0;
+            Undo.RecordObjects(walls, "Cut Live Again");
+            foreach (var w in walls)
+            {
+                w.appliedCutters.RemoveAll(c => c == null || c == cutter);
+                w.signature = "";
+                MarkChanged(w);
+            }
+            MarkDirty();
+            SyncNow();
+            return walls.Length;
+        }
+
         /// <summary>Goes back to the mesh from before Apply Cuts; the wall is cut live by its current windows again.</summary>
         internal static int DiscardAppliedCuts(IEnumerable<CuttableMesh> walls)
         {

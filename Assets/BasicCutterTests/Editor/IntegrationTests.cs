@@ -555,6 +555,89 @@ namespace BasicCutter.Tests
             AssertHoles(wall, 2, "A cuts live again after the discard");
         }
 
+        [Test]
+        public void CutLiveAgain_KeepsTheOldHole_AndCutsWhereTheWindowIsNow()
+        {
+            var wall = MakeObject("Wall", ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+            var a = MakeWindow(new Vector3(-1f, 1.5f, 0));
+            CutterSystem.SyncNow();
+            var cm = wall.GetComponent<CuttableMesh>();
+            CutterSystem.ApplyCuts(new[] { cm });
+            a.transform.position = new Vector3(1f, 1.5f, 0);
+            CutterSystem.SyncNow();
+            AssertHoles(wall, 1, "applied: the window does not cut");
+
+            var cutter = a.GetComponent<MeshCutter>();
+            Assert.AreEqual(1, CutterSystem.CutLiveAgain(cutter));
+            CollectionAssert.DoesNotContain(cm.appliedCutters, cutter);
+            Assert.IsTrue(cm.HasAppliedCuts, "the applied mesh stays");
+            AssertHoles(wall, 2, "old hole kept, new one cut");
+            Assert.AreEqual(1, CutterSystem.GetStatus(cutter).targets.Count);
+            Assert.AreEqual(0, CutterSystem.GetStatus(cutter).applied.Count);
+
+            a.transform.position = new Vector3(1.3f, 1.5f, 0);
+            CutterSystem.SyncNow();
+            AssertHoles(wall, 2, "the live hole follows the window");
+        }
+
+        /// <summary>The demo's Wall B with its door, as in the editor: Embedded storage, a prefab door, Ctrl+D and Delete.</summary>
+        static (CuttableMesh wall, GameObject door) DemoWallB()
+        {
+            BasicCutterSettings.instance.meshStorage = MeshStorage.Embedded;
+            DemoScene.Build(TempFolder + "/Demo");
+            var wall = GameObject.Find("Wall B").GetComponent<CuttableMesh>();
+            return (wall, GameObject.Find("Door"));
+        }
+
+        static double WallVolumeOf(CuttableMesh cm)
+        {
+            var sm = SourceMesh.Read(cm.GetComponent<MeshFilter>().sharedMesh);
+            Assert.IsTrue(sm.IsClosed(out int open), $"{open} open edges");
+            return sm.Volume();
+        }
+
+        const double DoorHole = 1.0 * 2.2 * 0.3; // about: the cut also reaches the wall bottom
+
+        [Test]
+        public void Demo_AppliedDoor_DuplicateMovedAndOriginalDeleted_KeepsBothHoles()
+        {
+            var (wall, door) = DemoWallB();
+            CutterSystem.SyncNow();
+            CutterSystem.ApplyCuts(new[] { wall });
+            double applied = WallVolumeOf(wall);
+
+            // Ctrl+D, then move the copy along the wall
+            Selection.activeGameObject = door;
+            Unsupported.DuplicateGameObjectsUsingPasteboard();
+            var copy = Selection.activeGameObject;
+            Assert.AreNotSame(door, copy);
+            copy.transform.position = wall.transform.TransformPoint(new Vector3(2.55f, -1.5f, 0));
+            CutterSystem.SyncNow();
+            double withCopy = WallVolumeOf(wall);
+            Assert.AreEqual(applied - DoorHole, withCopy, 0.05, "the copy cuts a second door hole");
+
+            // Delete the original door (as the Delete key does)
+            Undo.DestroyObjectImmediate(door);
+            CutterSystem.SyncNow();
+            Assert.AreEqual(withCopy, WallVolumeOf(wall), 1e-6, "the old door hole stays");
+        }
+
+        [Test]
+        public void Demo_AppliedDoor_CutLiveAgain_KeepsTheOldHole()
+        {
+            var (wall, door) = DemoWallB();
+            CutterSystem.SyncNow();
+            CutterSystem.ApplyCuts(new[] { wall });
+            double applied = WallVolumeOf(wall);
+
+            door.transform.position = wall.transform.TransformPoint(new Vector3(2.55f, -1.5f, 0));
+            CutterSystem.SyncNow();
+            Assert.AreEqual(applied, WallVolumeOf(wall), 1e-6, "applied: moving the door changes nothing");
+
+            Assert.AreEqual(1, CutterSystem.CutLiveAgain(door.GetComponent<MeshCutter>()));
+            Assert.AreEqual(applied - DoorHole, WallVolumeOf(wall), 0.05, "old hole kept, the door cuts where it is now");
+        }
+
         // ------------------------------------------------------------------ applied meshes in prefabs (Embedded)
 
         Mesh wallAsset, frameAsset;

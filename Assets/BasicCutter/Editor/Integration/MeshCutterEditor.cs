@@ -262,7 +262,10 @@ namespace BasicCutter.EditorTools
                     {
                         foreach (var r in walls)
                             if (r != null && GUILayout.Button(new GUIContent(r.name, "Select this wall"), EditorStyles.miniButton, GUILayout.ExpandWidth(false)))
+                            {
                                 Select(r.gameObject);
+                                GUIUtility.ExitGUI(); // the inspector switches to the wall
+                            }
                         GUILayout.FlexibleSpace();
                     }
 
@@ -275,7 +278,9 @@ namespace BasicCutter.EditorTools
                     if (status.outline != null && !status.outline.IsValid) DrawUnreadableWindowMeshes(cutter);
                     foreach (var info in status.infos) EditorGUILayout.LabelField("<color=" + Blue + ">ⓘ</color>  " + info, richMini);
                     if (status.applied.Count > 0)
-                        EditorGUILayout.LabelField("<color=" + Blue + ">ⓘ</color>  Its opening is part of the applied mesh: moving this window no longer changes " + Names(status.applied) + ".", richMini);
+                        Hint($"Its opening is part of the applied mesh of {Names(status.applied)}, so moving this window no longer changes it. " +
+                             "Cut Live Again keeps that hole and cuts again where the window is now.",
+                            "Cut Live Again", () => CutterSystem.CutLiveAgain(cutter));
                     if (cutter.isActiveAndEnabled && status.outline != null && status.outline.IsValid && status.targets.Count == 0 && !status.pending &&
                         status.baked.Count == 0 && status.applied.Count == 0 && status.issues.Count == 0)
                         Hint("Place the window inside a closed wall mesh.", "Snap To Wall", () => WallSnapping.Snap(cutter, WallSnapping.AlignRotation));
@@ -325,7 +330,13 @@ namespace BasicCutter.EditorTools
             using (new EditorGUILayout.HorizontalScope())
             {
                 EditorGUILayout.HelpBox(text, type);
-                if (GUILayout.Button(button, GUILayout.Width(Mathf.Max(70, button.Length * 7 + 16)), GUILayout.Height(38))) action();
+                if (GUILayout.Button(button, GUILayout.Width(Mathf.Max(70, button.Length * 7 + 16)), GUILayout.Height(38)))
+                {
+                    action();
+                    // the action changes what this inspector shows: end this GUI pass instead of drawing
+                    // the rest with a layout that no longer matches
+                    GUIUtility.ExitGUI();
+                }
             }
         }
 

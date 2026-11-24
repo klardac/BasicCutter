@@ -1,6 +1,6 @@
 # Basic Cutter
 
-Sürüm 1.1.1 · [github.com/klardac/BasicCutter](https://github.com/klardac/BasicCutter) · Lisans: CC BY-NC 4.0 (bkz. `LICENSE.md`)
+Sürüm 1.1.2 · [github.com/klardac/BasicCutter](https://github.com/klardac/BasicCutter) · Lisans: CC BY-NC 4.0 (bkz. `LICENSE.md`)
 
 Unity 6 için level design aracı. Pencere ve kapıların duvarın içinde kalan kısmını keser ve deliğin iç yüzeylerini (pervazları) duvarın materyaliyle kapatır. Kesimler geri alınabilir: orijinal mesh her zaman saklanır.
 
@@ -123,6 +123,7 @@ Bake edilmiş bir duvar yeni pencereleri yok sayar. Unbake edilirse duvar orijin
 3. Yeni pencereler bu mesh'in üzerine canlı olarak keser. İstediğiniz zaman tekrar Bake veya Apply Cuts yapabilirsiniz.
 
 - Bake edilmiş duvarda sadece bake anındaki pencereler işlenir. Sonradan bake edilmiş duvara konan pencere işlenmez; Apply Cuts'tan sonra canlı olarak keser. Böyle bir pencerenin inspector'ında duvarın bake edildiğini söyleyen bir uyarı görünür.
+- **Cut Live Again:** İşlenmiş bir pencerenin (örneğin kapının) inspector'ında "Applied to ..." satırının yanındaki butondur. Pencereyi işlendi listesinden çıkarır; eski deliği işlenmiş mesh'te kalır, pencere de bulunduğu yerde duvarı yeniden canlı keser. Böylece aynı kapıyla eski açıklığı kaybetmeden yeni bir yer kesebilirsin.
 - **Discard Applied Cuts**, Apply Cuts'tan önceki orijinal mesh'e döner. Sahnedeki pencereler duvarı yeniden canlı keser. Apply Cuts ve Discard, Ctrl+Z ile geri alınabilir.
 - Apply edilmiş duvar, kesicisi kalmasa bile Cuttable Mesh bileşenini korur, çünkü orijinal mesh'i o hatırlar.
 - **Prefab'lar (Embedded modu):** İşlenmiş mesh sahnenin içinde saklanır ve prefab dosyası sahnedeki bir mesh'e referans veremez. Bunun yerine her Apply Cuts işlenmiş mesh'e bir ID verir; prefab bu ID'yi alır ve Basic Cutter mesh'i ID'siyle bulup prefab dosyasının içine kopyalar. Şu durumlarda kendiliğinden çalışır: sahnedeki objeyi sürükleyerek prefab yapmak, kodla `SaveAsPrefabAsset` ile kaydetmek ve bir prefab kopyasında **Overrides > Apply All**. Apply All hangi kopyadan yapıldıysa onun mesh'i alınır.
