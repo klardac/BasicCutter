@@ -150,6 +150,7 @@ namespace BasicCutter.EditorTools
         {
             foreach (var cm in root.GetComponentsInChildren<CuttableMesh>(true))
             {
+                if (cm.originalMesh != null && cm.sourceMesh == null) return true; // applied cuts stayed in the scene
                 if (cm.state == CutState.Excluded || string.IsNullOrEmpty(cm.signature)) continue;
                 var mf = cm.GetComponent<MeshFilter>();
                 if (cm.cutMesh == null || mf == null || mf.sharedMesh == null) return true;

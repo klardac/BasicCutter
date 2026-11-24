@@ -16,6 +16,7 @@ An editor-only level design tool for Unity 6. Place a window, door or niche into
 - **Fast:** only the region around the cutter is recomputed, and large walls are cut on a background thread.
 - **Clean results:** the mesh stays watertight, and normals, UVs and materials are preserved.
 - **Storage:** cut meshes are embedded in the scene or prefab by default, so no extra files are needed.
+- **Bake and Apply Cuts:** freeze a wall, or apply its current holes into its mesh so they stay when windows move or are deleted while new windows keep cutting on top.
 
 ## Install
 

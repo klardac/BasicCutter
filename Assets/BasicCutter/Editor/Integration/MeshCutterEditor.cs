@@ -225,6 +225,14 @@ namespace BasicCutter.EditorTools
                 else if (status == null) { dot = Gray; title = "Waiting for the next update"; }
                 else if (status.outline == null || !status.outline.IsValid) { dot = Red; title = "Cannot build the opening"; }
                 else if (status.pending) { dot = Blue; title = "Cutting in the background..."; }
+                else if (status.targets.Count == 0 && status.issues.Count == 0 && (status.baked.Count > 0 || status.applied.Count > 0))
+                {
+                    dot = Gray;
+                    var parts = new List<string>();
+                    if (status.baked.Count > 0) parts.Add("Baked into " + Names(status.baked));
+                    if (status.applied.Count > 0) parts.Add("Applied to " + Names(status.applied));
+                    title = string.Join(", ", parts);
+                }
                 else if (status.targets.Count == 0) { dot = Gray; title = "Not cutting anything"; }
                 else if (status.issues.Count > 0) { dot = Amber; title = "Cutting " + WallNames(status) + ", with problems"; }
                 else { dot = Green; title = "Cutting " + WallNames(status); }
@@ -248,10 +256,11 @@ namespace BasicCutter.EditorTools
                 }
 
                 // walls: click to select
-                if (status != null && status.targets.Count > 0)
+                var walls = status == null ? new List<Renderer>() : status.targets.Concat(status.baked).Concat(status.applied).Where(r => r != null).Distinct().ToList();
+                if (walls.Count > 0)
                     using (new EditorGUILayout.HorizontalScope())
                     {
-                        foreach (var r in status.targets.Distinct())
+                        foreach (var r in walls)
                             if (r != null && GUILayout.Button(new GUIContent(r.name, "Select this wall"), EditorStyles.miniButton, GUILayout.ExpandWidth(false)))
                                 Select(r.gameObject);
                         GUILayout.FlexibleSpace();
@@ -265,7 +274,10 @@ namespace BasicCutter.EditorTools
                         EditorGUILayout.HelpBox("Door needs a flat bottom edge on the outline. Check that the door's local up axis points up.", MessageType.Warning);
                     if (status.outline != null && !status.outline.IsValid) DrawUnreadableWindowMeshes(cutter);
                     foreach (var info in status.infos) EditorGUILayout.LabelField("<color=" + Blue + ">ⓘ</color>  " + info, richMini);
-                    if (cutter.isActiveAndEnabled && status.outline != null && status.outline.IsValid && status.targets.Count == 0 && !status.pending)
+                    if (status.applied.Count > 0)
+                        EditorGUILayout.LabelField("<color=" + Blue + ">ⓘ</color>  Its opening is part of the applied mesh: moving this window no longer changes " + Names(status.applied) + ".", richMini);
+                    if (cutter.isActiveAndEnabled && status.outline != null && status.outline.IsValid && status.targets.Count == 0 && !status.pending &&
+                        status.baked.Count == 0 && status.applied.Count == 0 && status.issues.Count == 0)
                         Hint("Place the window inside a closed wall mesh.", "Snap To Wall", () => WallSnapping.Snap(cutter, WallSnapping.AlignRotation));
                 }
                 if (!settings.liveUpdate)
@@ -275,9 +287,11 @@ namespace BasicCutter.EditorTools
 
         const string Green = "#4CAF50", Amber = "#E0A030", Red = "#E05050", Gray = "#909090", Blue = "#4A90D9";
 
-        static string WallNames(CutterSystem.CutterStatus st)
+        static string WallNames(CutterSystem.CutterStatus st) => Names(st.targets);
+
+        static string Names(List<Renderer> walls)
         {
-            var names = st.targets.Where(r => r != null).Select(r => r.name).Distinct().ToList();
+            var names = walls.Where(r => r != null).Select(r => r.name).Distinct().ToList();
             return names.Count <= 2 ? string.Join(", ", names) : $"{names.Count} walls";
         }
 
@@ -392,7 +406,8 @@ namespace BasicCutter.EditorTools
             {
                 var st = CutterSystem.GetStatus(c);
                 if (st == null) continue;
-                foreach (var r in st.targets)
+                // baked walls too: Unbake Walls must find them
+                foreach (var r in st.targets.Concat(st.baked))
                     if (r != null && r.TryGetComponent(out CuttableMesh cm)) yield return cm;
             }
         }

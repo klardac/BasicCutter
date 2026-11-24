@@ -33,6 +33,8 @@ namespace BasicCutter.EditorTools
         internal sealed class CutterStatus
         {
             public readonly List<Renderer> targets = new List<Renderer>();
+            public readonly List<Renderer> baked = new List<Renderer>();    // baked walls that hold this opening
+            public readonly List<Renderer> applied = new List<Renderer>();  // walls this opening was applied into
             public readonly List<string> warnings = new List<string>();
             public readonly List<Issue> issues = new List<Issue>();
 
@@ -73,7 +75,7 @@ namespace BasicCutter.EditorTools
             // first wall each cutter really cuts: the trim is built on it
             public readonly Dictionary<MeshCutter, (Placement p, MeshFilter wall, SourceMesh sm)> primary =
                 new Dictionary<MeshCutter, (Placement, MeshFilter, SourceMesh)>();
-            // cutters on baked walls: their trims are kept as they are
+            // cutters on baked walls or applied into a wall: their trims are kept as they are
             public readonly HashSet<MeshCutter> frozen = new HashSet<MeshCutter>();
         }
 
@@ -234,8 +236,24 @@ namespace BasicCutter.EditorTools
             var frozen = new List<CuttableMesh>();
             foreach (var cm in root.GetComponentsInChildren<CuttableMesh>(true))
             {
-                // a baked wall that lost its mesh is cut once more from its current windows
                 var mf = cm.GetComponent<MeshFilter>();
+                // applied cuts stored in a scene cannot go into a prefab file: cut again from the original mesh
+                if (cm.originalMesh != null && cm.sourceMesh == null)
+                {
+                    var r = cm.GetComponent<Renderer>();
+                    if (r != null && cm.originalMaterialCount > 0 && r.sharedMaterials.Length > cm.originalMaterialCount)
+                        r.sharedMaterials = r.sharedMaterials.Take(cm.originalMaterialCount).ToArray();
+                    cm.sourceMesh = cm.originalMesh;
+                    cm.originalMesh = null;
+                    cm.originalMaterialCount = 0;
+                    cm.addedMaterials = 0;
+                    cm.appliedCutters.Clear();
+                    cm.cutBy.Clear();
+                    cm.cutByKnown = false;
+                    cm.cutMesh = null;
+                    Debug.LogWarning($"[Basic Cutter] '{prefabPath}': the applied cuts of '{cm.name}' were stored in the scene and cannot be saved into the prefab, so it was cut again from its original mesh with the windows inside the prefab.");
+                }
+                // a baked wall that lost its mesh is cut once more from its current windows
                 if (cm.state == CutState.Frozen && (cm.cutMesh == null || mf == null || mf.sharedMesh == null)) { cm.state = CutState.Live; frozen.Add(cm); }
                 if (cm.cutMesh == null) cm.signature = "";
             }
@@ -255,6 +273,12 @@ namespace BasicCutter.EditorTools
 
         static void Run(Scope scope)
         {
+            // openings applied into a wall stay as they are, together with their trims
+            foreach (var w in scope.walls)
+                if (w != null)
+                    foreach (var c in w.appliedCutters)
+                        if (c != null) scope.frozen.Add(c);
+
             // ---- find what every cutter goes through
             var perWall = new Dictionary<MeshFilter, List<Placement>>();
             foreach (var cutter in scope.cutters)
@@ -269,15 +293,18 @@ namespace BasicCutter.EditorTools
 
                 foreach (var r in scope.renderers)
                 {
-                    if (r == null || !r.bounds.Intersects(bounds)) continue;
+                    if (r == null) continue;
                     if (((1 << r.gameObject.layer) & cutter.targetLayers.value) == 0) continue;
-                    if (r.GetComponentInParent<MeshCutter>(true) != null) continue; // windows, doors and their trims
                     var mf = r.GetComponent<MeshFilter>();
                     if (mf == null) continue;
                     var cm = r.GetComponent<CuttableMesh>();
                     if (cm != null && cm.state == CutState.Excluded) continue;
                     var source = SourceOf(cm, mf);
                     if (source == null) continue;
+                    // from the mesh, not Renderer.bounds: that one is stale until the next frame after a mesh change
+                    if (!WorldBoundsOf(source, r.transform).Intersects(bounds)) continue;
+                    if (r.GetComponentInParent<MeshCutter>(true) != null) continue; // windows, doors and their trims
+                    if (cm != null && cm.appliedCutters.Contains(cutter)) { status.applied.Add(r); continue; }
 
                     SourceMesh sm;
                     try { sm = SourceMesh.Get(source); }
@@ -386,7 +413,18 @@ namespace BasicCutter.EditorTools
 
             if (cm != null && cm.state == CutState.Frozen)
             {
-                if (hasCutters) foreach (var p in placements) scope.frozen.Add(p.cutter);
+                if (!hasCutters) return;
+                if (!cm.cutByKnown) RecordBakedCutters(cm, mf, placements);
+                var wallRenderer = mf.GetComponent<Renderer>();
+                foreach (var p in placements)
+                {
+                    scope.frozen.Add(p.cutter);
+                    var st = GetStatus(p.cutter);
+                    if (st == null) continue;
+                    // (nothing recorded: treat every window as baked in, as before)
+                    if (cm.cutBy.Count == 0 || cm.cutBy.Contains(p.cutter)) st.baked.Add(wallRenderer);
+                    else st.Warn($"'{mf.name}' is baked, so this window does not cut it. Unbake it, or use Apply Cuts on it to keep its current holes and cut new ones.", IssueFix.SelectObject, mf.gameObject);
+                }
                 return;
             }
             if (cm != null && cm.state == CutState.Excluded) { Restore(cm, mf); return; }
@@ -412,39 +450,13 @@ namespace BasicCutter.EditorTools
             var sm = SourceMesh.Get(cm.sourceMesh);
             var renderer = mf.GetComponent<Renderer>();
 
-            // ---- jamb materials: extra submeshes with their own material slots after the wall's own
-            var current = renderer != null ? renderer.sharedMaterials : Array.Empty<Material>();
-            int addedCount = Mathf.Clamp(cm.addedMaterials, 0, current.Length);
-            var baseMaterials = current.Take(current.Length - addedCount).ToArray();
+            var baseMaterials = BaseMaterials(cm, renderer);
             var extras = new List<Material>();
-            int[] jambSub = null;
-            if (placements.Any(x => x.cutter.jambMaterial != null))
-            {
-                int subCount = Math.Max(1, sm.subMeshCount);
-                if (renderer == null || baseMaterials.Length != subCount)
-                {
-                    foreach (var p in placements.Where(x => x.cutter.jambMaterial != null))
-                        GetStatus(p.cutter)?.Warn($"'{mf.name}' has {baseMaterials.Length} material slot(s) for {subCount} submesh(es), so Jamb Material is not used there.", IssueFix.SelectObject, mf.gameObject);
-                }
-                else
-                {
-                    jambSub = new int[placements.Count];
-                    for (int i = 0; i < placements.Count; i++)
-                    {
-                        var m = placements[i].cutter.jambMaterial;
-                        if (m == null) { jambSub[i] = -1; continue; }
-                        int k = extras.IndexOf(m);
-                        if (k < 0) { extras.Add(m); k = extras.Count - 1; }
-                        jambSub[i] = subCount + k;
-                    }
-                }
-            }
-
-            var h = Hash64.Create();
-            h.Add(sm.contentHash);
-            var order = Enumerable.Range(0, placements.Count).OrderBy(i => placements[i].hash).ToList();
-            foreach (int i in order) { h.Add(placements[i].hash); h.Add(jambSub != null ? jambSub[i] : -1); }
-            string signature = h.ToString();
+            int[] jambSub = JambSubmeshes(placements, sm, renderer, baseMaterials, extras, out bool slotMismatch);
+            if (slotMismatch)
+                foreach (var p in placements.Where(x => x.cutter.jambMaterial != null))
+                    GetStatus(p.cutter)?.Warn($"'{mf.name}' has {baseMaterials.Length} material slot(s) for {Math.Max(1, sm.subMeshCount)} submesh(es), so Jamb Material is not used there.", IssueFix.SelectObject, mf.gameObject);
+            string signature = Signature(sm, placements, jambSub);
 
             foreach (var p in placements)
             {
@@ -462,6 +474,9 @@ namespace BasicCutter.EditorTools
 
             if (!scope.force && !added && cm.signature == signature && cm.cutMesh != null && mf.sharedMesh == cm.cutMesh)
             {
+                // walls cut by an older version: remember which windows made this cut
+                // (kept in memory, saved with the next save: opening an old scene does not mark it modified)
+                if (!cm.cutByKnown) SetCutBy(cm, placements.Select(p => p.cutter));
                 SetMaterials(cm, renderer, baseMaterials, extras);
                 foreach (var p in placements) RecordPrimary(scope, p, mf, sm);
                 return;
@@ -531,14 +546,194 @@ namespace BasicCutter.EditorTools
             }
 
             var mesh = GeneratedMeshStore.Acquire(cm, cm.cutMesh, "_Cut", GeneratedMeshStore.IsInheritedFromPrefab(cm, "cutMesh"), scope.refCount);
+            bool created = mesh != cm.cutMesh;
             cm.cutMesh = mesh;
             result.WriteTo(mesh, sm);
             EditorUtility.SetDirty(mesh);
+            // a new asset file holds the empty mesh until it is saved, and an import can reload it from there
+            if (created) GeneratedMeshStore.Save(mesh);
             SetMesh(mf, cm, mesh);
             SetMaterials(cm, renderer, baseMaterials, extras);
             cm.signature = signature;
+            SetCutBy(cm, Enumerable.Range(0, placements.Count).Where(i => result.cutterAffected[i]).Select(i => placements[i].cutter));
             MarkChanged(cm);
             pendingFinalize.Add(cm);
+        }
+
+        static Material[] BaseMaterials(CuttableMesh cm, Renderer renderer)
+        {
+            var current = renderer != null ? renderer.sharedMaterials : Array.Empty<Material>();
+            int addedCount = Mathf.Clamp(cm.addedMaterials, 0, current.Length);
+            return current.Take(current.Length - addedCount).ToArray();
+        }
+
+        /// <summary>
+        /// Jamb materials: extra submeshes with their own material slots after the wall's own. Returns the
+        /// submesh of each cutter's inner faces (-1: the wall's own), or null when no cutter has a jamb material
+        /// or the wall's slots do not match its submeshes (<paramref name="slotMismatch"/>).
+        /// </summary>
+        static int[] JambSubmeshes(List<Placement> placements, SourceMesh sm, Renderer renderer, Material[] baseMaterials, List<Material> extras, out bool slotMismatch)
+        {
+            slotMismatch = false;
+            if (!placements.Any(x => x.cutter.jambMaterial != null)) return null;
+            int subCount = Math.Max(1, sm.subMeshCount);
+            if (renderer == null || baseMaterials.Length != subCount) { slotMismatch = true; return null; }
+            var jambSub = new int[placements.Count];
+            for (int i = 0; i < placements.Count; i++)
+            {
+                var m = placements[i].cutter.jambMaterial;
+                if (m == null) { jambSub[i] = -1; continue; }
+                int k = extras.IndexOf(m);
+                if (k < 0) { extras.Add(m); k = extras.Count - 1; }
+                jambSub[i] = subCount + k;
+            }
+            return jambSub;
+        }
+
+        /// <summary>Identifies a cut: the wall's content plus every opening (order independent).</summary>
+        static string Signature(SourceMesh sm, List<Placement> placements, int[] jambSub)
+        {
+            var h = Hash64.Create();
+            h.Add(sm.contentHash);
+            var order = Enumerable.Range(0, placements.Count).OrderBy(i => placements[i].hash).ToList();
+            foreach (int i in order) { h.Add(placements[i].hash); h.Add(jambSub != null ? jambSub[i] : -1); }
+            return h.ToString();
+        }
+
+        static void SetCutBy(CuttableMesh cm, IEnumerable<MeshCutter> cutters)
+        {
+            cm.cutBy.Clear();
+            foreach (var c in cutters) if (c != null && !cm.cutBy.Contains(c)) cm.cutBy.Add(c);
+            cm.cutByKnown = true;
+        }
+
+        /// <summary>
+        /// A wall baked by an older version does not know which windows made its cut. The windows that
+        /// still reproduce its signature are those; a window placed on it later is not.
+        /// </summary>
+        static void RecordBakedCutters(CuttableMesh cm, MeshFilter mf, List<Placement> placements)
+        {
+            cm.cutBy.Clear();
+            cm.cutByKnown = true;
+            try
+            {
+                if (cm.sourceMesh != null && !string.IsNullOrEmpty(cm.signature) && placements.Count <= 12)
+                {
+                    var sm = SourceMesh.Get(cm.sourceMesh);
+                    var renderer = mf.GetComponent<Renderer>();
+                    var baseMaterials = BaseMaterials(cm, renderer);
+                    int n = placements.Count;
+                    // larger sets first: the full set is the usual answer
+                    foreach (int mask in Enumerable.Range(1, (1 << n) - 1).OrderByDescending(BitCount))
+                    {
+                        var subset = new List<Placement>();
+                        for (int i = 0; i < n; i++) if ((mask & (1 << i)) != 0) subset.Add(placements[i]);
+                        var jamb = JambSubmeshes(subset, sm, renderer, baseMaterials, new List<Material>(), out _);
+                        if (Signature(sm, subset, jamb) != cm.signature) continue;
+                        SetCutBy(cm, subset.Select(p => p.cutter));
+                        break;
+                    }
+                }
+            }
+            catch (Exception e) { Debug.LogWarning($"[Basic Cutter] Could not tell which windows were baked into '{mf.name}': {e.Message}", mf); }
+        }
+
+        static int BitCount(int v)
+        {
+            int c = 0;
+            for (; v != 0; v &= v - 1) c++;
+            return c;
+        }
+
+        // ------------------------------------------------------------------ apply cuts
+
+        /// <summary>
+        /// Makes each wall's current cut its new base mesh. The openings that made it stay even when their
+        /// windows move or are deleted, and the windows no longer cut that wall; other windows cut on top
+        /// of it. Works on live and baked walls; the wall is live afterwards. Returns how many walls changed.
+        /// </summary>
+        internal static int ApplyCuts(IEnumerable<CuttableMesh> walls)
+        {
+            SyncNow();
+            FinalizeAll();
+            int count = 0;
+            foreach (var cm in walls)
+            {
+                if (cm == null) continue;
+                var mf = cm.GetComponent<MeshFilter>();
+                if (mf == null || cm.cutMesh == null || mf.sharedMesh != cm.cutMesh) continue;
+                var renderer = mf.GetComponent<Renderer>();
+                var col = mf.GetComponent<MeshCollider>();
+                Undo.RecordObjects(new Object[] { cm, mf, renderer, col }.Where(o => o != null).ToArray(), "Apply Cuts");
+
+                List<MeshCutter> cutters;
+                if (cm.cutByKnown && cm.cutBy.Count > 0) cutters = cm.cutBy.ToList();
+                else
+                {
+                    cutters = GetCutters(cm).ToList();
+                    if (cm.state == CutState.Frozen && cutters.Count > 0)
+                        Debug.LogWarning($"[Basic Cutter] Could not tell which windows were baked into '{cm.name}', so every window touching it now was applied.", cm);
+                }
+
+                if (cm.originalMesh == null)
+                {
+                    cm.originalMesh = cm.sourceMesh;
+                    cm.originalMaterialCount = BaseMaterials(cm, renderer).Length;
+                }
+                cm.appliedCutters.RemoveAll(c => c == null);
+                foreach (var c in cutters)
+                    if (c != null && !cm.appliedCutters.Contains(c)) cm.appliedCutters.Add(c);
+
+                // the cut mesh becomes the base; the next cut writes a new one
+                cm.sourceMesh = cm.cutMesh;
+                cm.cutMesh = null;
+                cm.addedMaterials = 0;      // the jamb material slots now belong to the base mesh
+                cm.cutBy.Clear();
+                cm.cutByKnown = true;
+                cm.signature = "";
+                cm.state = CutState.Live;
+                cm.autoAdded = false;       // keep the component: it remembers the original mesh
+                MarkChanged(cm);
+                count++;
+            }
+            MarkDirty();
+            SyncNow();
+            return count;
+        }
+
+        /// <summary>Goes back to the mesh from before Apply Cuts; the wall is cut live by its current windows again.</summary>
+        internal static int DiscardAppliedCuts(IEnumerable<CuttableMesh> walls)
+        {
+            int count = 0;
+            foreach (var cm in walls)
+            {
+                if (cm == null || cm.originalMesh == null) continue;
+                var mf = cm.GetComponent<MeshFilter>();
+                var renderer = cm.GetComponent<Renderer>();
+                var col = cm.GetComponent<MeshCollider>();
+                Undo.RecordObjects(new Object[] { cm, mf, renderer, col }.Where(o => o != null).ToArray(), "Discard Applied Cuts");
+
+                if (renderer != null && cm.originalMaterialCount > 0 && renderer.sharedMaterials.Length > cm.originalMaterialCount)
+                {
+                    renderer.sharedMaterials = renderer.sharedMaterials.Take(cm.originalMaterialCount).ToArray();
+                    MarkChanged(renderer);
+                }
+                cm.addedMaterials = 0;
+                cm.sourceMesh = cm.originalMesh;
+                cm.originalMesh = null;
+                cm.originalMaterialCount = 0;
+                cm.appliedCutters.Clear();
+                cm.cutBy.Clear();
+                cm.cutByKnown = true;
+                cm.signature = "";
+                if (cm.state == CutState.Frozen) cm.state = CutState.Live;
+                if (mf != null) SetMesh(mf, cm, cm.sourceMesh);
+                MarkChanged(cm);
+                count++;
+            }
+            MarkDirty();
+            SyncNow();
+            return count;
         }
 
         static List<List<VolumeTri>> Volumes(List<Placement> placements)
@@ -605,6 +800,7 @@ namespace BasicCutter.EditorTools
                 cm.addedMaterials = 0;
                 MarkChanged(cm);
             }
+            if (cm.cutBy.Count > 0) { cm.cutBy.Clear(); MarkChanged(cm); }
             if (cm.sourceMesh == null) return;
             if (mf.sharedMesh != cm.sourceMesh) SetMesh(mf, cm, cm.sourceMesh);
             if (!string.IsNullOrEmpty(cm.signature)) { cm.signature = ""; MarkChanged(cm); }
@@ -668,6 +864,7 @@ namespace BasicCutter.EditorTools
                     var mesh = GeneratedMeshStore.Acquire(trim, tmf.sharedMesh, "", GeneratedMeshStore.IsInheritedFromPrefab(tmf, "m_Mesh"), scope.refCount);
                     data.WriteTo(mesh);
                     EditorUtility.SetDirty(mesh);
+                    if (mesh != tmf.sharedMesh) GeneratedMeshStore.Save(mesh); // new asset file: see ApplyWall
                     if (tmf.sharedMesh != mesh) { tmf.sharedMesh = mesh; MarkChanged(tmf); }
                     trim.signature = signature;
                     MarkChanged(trim);
@@ -739,6 +936,20 @@ namespace BasicCutter.EditorTools
             var b = new Bounds(m.MultiplyPoint3x4(local[0].ToVector3()), Vector3.zero);
             foreach (var p in local) b.Encapsulate(m.MultiplyPoint3x4(p.ToVector3()));
             return b;
+        }
+
+        static Bounds WorldBoundsOf(Mesh mesh, Transform t)
+        {
+            var b = mesh.bounds;
+            var m = t.localToWorldMatrix;
+            Vector3 ax = m.MultiplyVector(new Vector3(b.extents.x, 0, 0));
+            Vector3 ay = m.MultiplyVector(new Vector3(0, b.extents.y, 0));
+            Vector3 az = m.MultiplyVector(new Vector3(0, 0, b.extents.z));
+            var extents = new Vector3(
+                Mathf.Abs(ax.x) + Mathf.Abs(ay.x) + Mathf.Abs(az.x),
+                Mathf.Abs(ax.y) + Mathf.Abs(ay.y) + Mathf.Abs(az.y),
+                Mathf.Abs(ax.z) + Mathf.Abs(ay.z) + Mathf.Abs(az.z));
+            return new Bounds(m.MultiplyPoint3x4(b.center), extents * 2f);
         }
 
         static bool Overlaps(Placement a, Placement b, Transform wall)

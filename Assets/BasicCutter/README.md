@@ -1,6 +1,6 @@
 # Basic Cutter
 
-Sürüm 1.0.0 · [github.com/klardac/BasicCutter](https://github.com/klardac/BasicCutter) · Lisans: CC BY-NC 4.0 (bkz. `LICENSE.md`)
+Sürüm 1.1.0 · [github.com/klardac/BasicCutter](https://github.com/klardac/BasicCutter) · Lisans: CC BY-NC 4.0 (bkz. `LICENSE.md`)
 
 Unity 6 için level design aracı. Pencere ve kapıların duvarın içinde kalan kısmını keser ve deliğin iç yüzeylerini (pervazları) duvarın materyaliyle kapatır. Kesimler geri alınabilir: orijinal mesh her zaman saklanır.
 
@@ -109,10 +109,23 @@ Aynı duvarda üst üste binen kesiciler artık tek bir açıklık olarak birle�
 | Mod | Davranış |
 |---|---|
 | **Live** | Pencereler değiştikçe otomatik yeniden kesilir. |
-| **Frozen** | Bake edilmiş hali: mevcut kesim korunur, değişiklikler uygulanmaz. |
+| **Frozen** | Bake edilmiş hali: mevcut kesim korunur, değişiklikler uygulanmaz. Üzerine yeni pencere kesmek için **Apply Cuts** kullanın. |
 | **Excluded** | Orijinal mesh gösterilir ve kesiciler bu objeyi yok sayar. |
 
-Butonlar: **Rebuild**, **Bake / Unbake**, **Revert To Original / Include Again**.
+Butonlar: **Rebuild**, **Bake / Unbake**, **Revert To Original / Include Again**, **Apply Cuts**, **Discard Applied Cuts**.
+
+### Apply Cuts: kesimi duvara işlemek
+
+Bake edilmiş bir duvar yeni pencereleri yok sayar. Unbake edilirse duvar orijinal mesh'ten yeniden kesilir; bu yüzden pencereleri silinmiş veya taşınmış eski delikler kapanır. Eski delikleri koruyup yeni pencereler kesmek için **Apply Cuts** kullanılır:
+
+1. Duvarı seçin ve Cuttable Mesh'te **Apply Cuts**'a basın. Duvarın o anki kesik hali yeni temel mesh olur ve duvar Live'a geçer.
+2. Kesimi oluşturan pencereler artık bu duvarı kesmez. Taşınsalar veya silinseler bile delikleri yerinde kalır, çerçeveleri (trim) de olduğu gibi korunur. Inspector'larında "Applied to ..." yazar.
+3. Yeni pencereler bu mesh'in üzerine canlı olarak keser. İstediğiniz zaman tekrar Bake veya Apply Cuts yapabilirsiniz.
+
+- Bake edilmiş duvarda sadece bake anındaki pencereler işlenir. Sonradan bake edilmiş duvara konan pencere işlenmez; Apply Cuts'tan sonra canlı olarak keser. Böyle bir pencerenin inspector'ında duvarın bake edildiğini söyleyen bir uyarı görünür.
+- **Discard Applied Cuts**, Apply Cuts'tan önceki orijinal mesh'e döner. Sahnedeki pencereler duvarı yeniden canlı keser. Apply Cuts ve Discard, Ctrl+Z ile geri alınabilir.
+- Apply edilmiş duvar, kesicisi kalmasa bile Cuttable Mesh bileşenini korur, çünkü orijinal mesh'i o hatırlar.
+- **Embedded** modunda sahnede apply edilmiş bir duvardan yeni prefab yapılırsa, işlenmiş mesh sahneye ait olduğu için prefab'a taşınamaz. Prefab orijinal mesh'ten, içindeki pencerelerle yeniden kesilir ve konsola bir uyarı yazılır.
 
 ## Menü: Tools > Basic Cutter
 

@@ -378,5 +378,216 @@ namespace BasicCutter.Tests
                 Assert.AreEqual(1, st.targets.Count, $"{c.name} should cut exactly one wall. Warnings: {string.Join("; ", st.warnings)}");
             }
         }
+
+        [Test]
+        public void AssetFolder_NewCutMesh_SurvivesAReimport()
+        {
+            var wall = MakeObject("Wall", ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+            var window = MakeWindow(new Vector3(0, 1.5f, 0));
+            window.GetComponent<MeshCutter>().trim = true;
+            CutterSystem.SyncNow();
+            var mf = wall.GetComponent<MeshFilter>();
+            string path = AssetDatabase.GetAssetPath(mf.sharedMesh);
+            Assert.IsNotEmpty(path);
+            // the editor may unload an asset and load it again from its file: the file must already hold
+            // the cut, not the empty mesh it was created with
+            Resources.UnloadAsset(mf.sharedMesh);
+            var reloaded = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+            Assert.AreEqual(WallVolume - HoleVolume, SourceMesh.Read(reloaded).Volume(), 1e-3);
+            var trimMesh = window.GetComponentInChildren<CutterTrim>().GetComponent<MeshFilter>().sharedMesh;
+            string trimPath = AssetDatabase.GetAssetPath(trimMesh);
+            Resources.UnloadAsset(trimMesh);
+            Assert.Greater(AssetDatabase.LoadAssetAtPath<Mesh>(trimPath).vertexCount, 0, "trim mesh saved too");
+        }
+
+        // ------------------------------------------------------------------ apply cuts
+
+        const double WallVolume = 4 * 3 * 0.3, HoleVolume = 1.0 * 1.2 * 0.3;
+
+        static void AssertHoles(GameObject wall, int holes, string message)
+        {
+            var sm = SourceMesh.Read(wall.GetComponent<MeshFilter>().sharedMesh);
+            Assert.IsTrue(sm.IsClosed(out int open), $"{message}: {open} open edges");
+            Assert.AreEqual(WallVolume - holes * HoleVolume, sm.Volume(), 1e-3, message);
+        }
+
+        [Test]
+        public void ApplyCuts_BakedWall_KeepsOldHole_AndNewWindowCuts()
+        {
+            var wallMesh = ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall");
+            var wall = MakeObject("Wall", wallMesh, new Vector3(0, 1.5f, 0));
+            var a = MakeWindow(new Vector3(-1f, 1.5f, 0));
+            CutterSystem.SyncNow();
+            var cm = wall.GetComponent<CuttableMesh>();
+            cm.state = CutState.Frozen;
+
+            // a new window on a baked wall does not cut it and says why
+            var b = MakeWindow(new Vector3(1f, 1.5f, 0));
+            CutterSystem.SyncNow();
+            AssertHoles(wall, 1, "baked: only the old hole");
+            var stA = CutterSystem.GetStatus(a.GetComponent<MeshCutter>());
+            var stB = CutterSystem.GetStatus(b.GetComponent<MeshCutter>());
+            Assert.AreEqual(1, stA.baked.Count, "A is baked into the wall");
+            Assert.IsTrue(stB.warnings.Any(w => w.Contains("is baked")), "B explains why it does not cut");
+
+            Assert.AreEqual(1, CutterSystem.ApplyCuts(new[] { cm }));
+            Assert.AreEqual(CutState.Live, cm.State);
+            Assert.IsTrue(cm.HasAppliedCuts);
+            Assert.AreSame(wallMesh, cm.OriginalMesh);
+            CollectionAssert.AreEqual(new[] { a.GetComponent<MeshCutter>() }, cm.appliedCutters, "only the baked window is applied");
+            AssertHoles(wall, 2, "after Apply Cuts the new window cuts too");
+            Assert.AreEqual(1, CutterSystem.GetStatus(a.GetComponent<MeshCutter>()).applied.Count);
+
+            // the applied hole stays when its window is deleted; the live one follows its window
+            Object.DestroyImmediate(a);
+            b.transform.position = new Vector3(1.3f, 1.5f, 0);
+            CutterSystem.SyncNow();
+            AssertHoles(wall, 2, "old hole kept, new one moved");
+            Assert.IsNotNull(wall.GetComponent<CuttableMesh>());
+
+            // with no live window left the wall shows the applied mesh and keeps its component
+            Object.DestroyImmediate(b);
+            CutterSystem.SyncNow();
+            Assert.IsNotNull(wall.GetComponent<CuttableMesh>(), "the component remembers the original mesh");
+            AssertHoles(wall, 1, "only the applied hole");
+
+            Assert.AreEqual(1, CutterSystem.DiscardAppliedCuts(new[] { cm }));
+            Assert.IsFalse(cm.HasAppliedCuts);
+            Assert.AreSame(wallMesh, wall.GetComponent<MeshFilter>().sharedMesh, "back to the original");
+        }
+
+        [Test]
+        public void ApplyCuts_LiveWall_MovingTheAppliedWindowNoLongerChangesIt()
+        {
+            var wall = MakeObject("Wall", ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+            var a = MakeWindow(new Vector3(-1f, 1.5f, 0));
+            a.GetComponent<MeshCutter>().trim = true;
+            CutterSystem.SyncNow();
+            var cm = wall.GetComponent<CuttableMesh>();
+            var trimMesh = a.GetComponentInChildren<CutterTrim>().GetComponent<MeshFilter>().sharedMesh;
+            Assert.AreEqual(1, CutterSystem.ApplyCuts(new[] { cm }));
+            var applied = wall.GetComponent<MeshFilter>().sharedMesh;
+            // (asset meshes are compared as Unity objects: a reload gives a new C# wrapper for the same mesh)
+            Assert.AreEqual(cm.SourceMesh, applied);
+            AssertHoles(wall, 1, "the applied mesh has the hole");
+            Assert.AreEqual(1, CutterSystem.GetStatus(a.GetComponent<MeshCutter>()).applied.Count);
+
+            a.transform.position = new Vector3(1f, 1.5f, 0);
+            CutterSystem.SyncNow();
+            Assert.AreEqual(applied, wall.GetComponent<MeshFilter>().sharedMesh, "not cut again");
+            AssertHoles(wall, 1, "one hole, where it was applied");
+            var trim = a.GetComponentInChildren<CutterTrim>();
+            Assert.IsNotNull(trim, "the applied window keeps its trim");
+            Assert.AreEqual(trimMesh, trim.GetComponent<MeshFilter>().sharedMesh);
+        }
+
+        [Test]
+        public void ApplyCuts_CanBeUndone()
+        {
+            var wallMesh = ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall");
+            var wall = MakeObject("Wall", wallMesh, new Vector3(0, 1.5f, 0));
+            MakeWindow(new Vector3(-1f, 1.5f, 0));
+            CutterSystem.SyncNow();
+            var cm = wall.GetComponent<CuttableMesh>();
+            var cut = cm.CutMesh;
+            Undo.IncrementCurrentGroup();
+            CutterSystem.ApplyCuts(new[] { cm });
+            Assert.IsTrue(cm.HasAppliedCuts);
+            Undo.PerformUndo();
+            CutterSystem.SyncNow();
+            Assert.IsFalse(cm.HasAppliedCuts);
+            Assert.AreSame(wallMesh, cm.SourceMesh);
+            Assert.AreSame(cut, wall.GetComponent<MeshFilter>().sharedMesh);
+            AssertHoles(wall, 1, "live again");
+        }
+
+        [Test]
+        public void ApplyCuts_WallBakedByAnOlderVersion_FindsItsWindows()
+        {
+            var wall = MakeObject("Wall", ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+            var a = MakeWindow(new Vector3(-1.3f, 1.5f, 0));
+            var a2 = MakeWindow(new Vector3(0f, 1.5f, 0));
+            CutterSystem.SyncNow();
+            var cm = wall.GetComponent<CuttableMesh>();
+            cm.state = CutState.Frozen;
+            // 1.0.0 did not record the windows of a cut
+            cm.cutBy.Clear();
+            cm.cutByKnown = false;
+
+            // a window placed on the baked wall before the upgrade: not part of the baked cut
+            var b = MakeWindow(new Vector3(1.3f, 1.5f, 0));
+            CutterSystem.SyncNow();
+            CollectionAssert.AreEquivalent(new[] { a.GetComponent<MeshCutter>(), a2.GetComponent<MeshCutter>() }, cm.cutBy);
+            AssertHoles(wall, 2, "still the baked cut");
+
+            CutterSystem.ApplyCuts(new[] { cm });
+            CollectionAssert.DoesNotContain(cm.appliedCutters, b.GetComponent<MeshCutter>());
+            Assert.AreEqual(1, CutterSystem.GetStatus(b.GetComponent<MeshCutter>()).targets.Count, "the new window cuts");
+            AssertHoles(wall, 3, "two applied, one live");
+        }
+
+        [Test]
+        public void ApplyCuts_KeepsJambMaterial_AndDiscardRemovesItsSlot()
+        {
+            var wall = MakeObject("Wall", ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+            var wallMat = new Material(Shader.Find("Hidden/InternalErrorShader")) { name = "WallMat" };
+            var jambMat = new Material(wallMat) { name = "JambMat" };
+            var renderer = wall.GetComponent<MeshRenderer>();
+            renderer.sharedMaterial = wallMat;
+            var a = MakeWindow(new Vector3(-1f, 1.5f, 0));
+            a.GetComponent<MeshCutter>().jambMaterial = jambMat;
+            CutterSystem.SyncNow();
+            var cm = wall.GetComponent<CuttableMesh>();
+            CutterSystem.ApplyCuts(new[] { cm });
+            CollectionAssert.AreEqual(new[] { wallMat, jambMat }, renderer.sharedMaterials, "the slot belongs to the applied mesh");
+            Assert.AreEqual(0, cm.addedMaterials);
+
+            var b = MakeWindow(new Vector3(1f, 1.5f, 0));
+            b.GetComponent<MeshCutter>().jambMaterial = jambMat;
+            CutterSystem.SyncNow();
+            CollectionAssert.AreEqual(new[] { wallMat, jambMat, jambMat }, renderer.sharedMaterials);
+            AssertHoles(wall, 2, "both");
+
+            CutterSystem.DiscardAppliedCuts(new[] { cm });
+            CollectionAssert.AreEqual(new[] { wallMat, jambMat }, renderer.sharedMaterials, "the original slot plus one jamb slot for A and B");
+            Assert.AreEqual(1, cm.addedMaterials);
+            AssertHoles(wall, 2, "A cuts live again after the discard");
+        }
+
+        [Test]
+        public void ApplyCuts_EmbeddedInScene_NewPrefab_IsCutAgainFromTheOriginal()
+        {
+            BasicCutterSettings.instance.meshStorage = MeshStorage.Embedded;
+            AssetDatabase.CreateFolder("Assets", "BasicCutterTestTemp");
+            var wallMesh = ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall");
+            AssetDatabase.CreateAsset(wallMesh, TempFolder + "/Wall.asset");
+            var frame = ProceduralMeshes.Frame(ProceduralMeshes.Rect(1f, 1.2f), ProceduralMeshes.Rect(0.9f, 1.1f), 0.1f, "Frame");
+            AssetDatabase.CreateAsset(frame, TempFolder + "/Frame.asset");
+            var house = new GameObject("House");
+            var wall = MakeObject("Wall", wallMesh, new Vector3(0, 1.5f, 0), house.transform);
+            var window = new GameObject("Window");
+            window.transform.SetParent(house.transform, false);
+            window.transform.localPosition = new Vector3(0.5f, 1.6f, 0);
+            window.AddComponent<MeshCutter>();
+            MakeObject("Frame", frame, Vector3.zero, window.transform).transform.localPosition = Vector3.zero;
+            CutterSystem.SyncNow();
+            CutterSystem.ApplyCuts(new[] { wall.GetComponent<CuttableMesh>() });
+
+            string path = TempFolder + "/House.prefab";
+            PrefabUtility.SaveAsPrefabAsset(house, path);
+            var asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            Assert.IsTrue(PrefabMeshFixer.NeedsFix(asset), "the applied mesh stayed in the scene");
+            UnityEngine.TestTools.LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("applied cuts of 'Wall'"));
+            PrefabMeshFixer.Fix(path);
+
+            asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            var assetCm = asset.transform.Find("Wall").GetComponent<CuttableMesh>();
+            Assert.AreSame(wallMesh, assetCm.SourceMesh);
+            Assert.IsFalse(assetCm.HasAppliedCuts);
+            var assetWall = assetCm.GetComponent<MeshFilter>().sharedMesh;
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(assetWall));
+            Assert.AreEqual(WallVolume - HoleVolume, SourceMesh.Read(assetWall).Volume(), 1e-3, "the window in the prefab cuts it again");
+            Assert.IsFalse(PrefabMeshFixer.NeedsFix(asset));
+        }
     }
 }

@@ -12,14 +12,20 @@ namespace BasicCutter.EditorTools
             serializedObject.Update();
             var stateProp = serializedObject.FindProperty("state");
             EditorGUILayout.PropertyField(stateProp, new GUIContent("Mode", "Live: re-cut automatically. Frozen: keep the current cut (baked). Excluded: original mesh, never cut."));
+            var walls = targets.Cast<CuttableMesh>().ToArray();
+            bool anyApplied = walls.Any(w => w.HasAppliedCuts);
             using (new EditorGUI.DisabledScope(true))
             {
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("sourceMesh"), new GUIContent("Original Mesh"));
+                if (anyApplied)
+                {
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("originalMesh"), new GUIContent("Original Mesh", "The mesh from before Apply Cuts."));
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("sourceMesh"), new GUIContent("Applied Mesh", "The original mesh with the applied openings; live cuts start from it."));
+                }
+                else EditorGUILayout.PropertyField(serializedObject.FindProperty("sourceMesh"), new GUIContent("Original Mesh"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("cutMesh"), new GUIContent("Cut Mesh"));
             }
             serializedObject.ApplyModifiedProperties();
 
-            var walls = targets.Cast<CuttableMesh>().ToArray();
             EditorGUILayout.Space();
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -29,13 +35,38 @@ namespace BasicCutter.EditorTools
                 bool anyExcluded = walls.Any(w => w.state == CutState.Excluded);
                 if (GUILayout.Button(anyExcluded ? "Include Again" : "Revert To Original")) Set(walls, anyExcluded ? CutState.Live : CutState.Excluded);
             }
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                bool canApply = walls.Any(w => w.state != CutState.Excluded && w.cutMesh != null && w.TryGetComponent(out MeshFilter f) && f.sharedMesh == w.cutMesh);
+                using (new EditorGUI.DisabledScope(!canApply))
+                    if (GUILayout.Button(new GUIContent("Apply Cuts", "Make the current holes part of this wall's mesh. They stay when their windows move or are deleted, and new windows cut on top of them. The wall becomes live.")))
+                    {
+                        CutterSystem.ApplyCuts(walls);
+                        GUIUtility.ExitGUI();
+                    }
+                using (new EditorGUI.DisabledScope(!anyApplied))
+                    if (GUILayout.Button(new GUIContent("Discard Applied Cuts", "Go back to the mesh from before Apply Cuts. The wall is cut live by its current windows again.")))
+                    {
+                        CutterSystem.DiscardAppliedCuts(walls);
+                        GUIUtility.ExitGUI();
+                    }
+            }
 
             if (walls.Length != 1) return;
             var cm = walls[0];
             switch (cm.state)
             {
-                case CutState.Frozen: EditorGUILayout.HelpBox("Baked: this mesh is not updated when windows move.", MessageType.Info); break;
-                case CutState.Excluded: EditorGUILayout.HelpBox("Reverted: the original mesh is shown and cutters ignore this object.", MessageType.Info); break;
+                case CutState.Frozen: EditorGUILayout.HelpBox("Baked: this mesh is not updated when windows move. Use Apply Cuts to keep these holes and cut new windows into it.", MessageType.Info); break;
+                case CutState.Excluded:
+                    EditorGUILayout.HelpBox(cm.HasAppliedCuts
+                        ? "Excluded: the applied mesh is shown and cutters ignore this object."
+                        : "Reverted: the original mesh is shown and cutters ignore this object.", MessageType.Info);
+                    break;
+            }
+            if (cm.HasAppliedCuts)
+            {
+                int n = cm.appliedCutters.Count(c => c != null);
+                EditorGUILayout.HelpBox($"Applied cuts: the holes of earlier windows are part of this wall's mesh{(n > 0 ? $" ({n} window(s) applied, they no longer cut it)" : "")}. Discard Applied Cuts goes back to the original mesh.", MessageType.None);
             }
             if (cm.sourceMesh != null)
             {

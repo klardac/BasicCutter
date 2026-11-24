@@ -101,7 +101,7 @@ namespace BasicCutter.EditorTools
                 {
                     foreach (var mf in root.GetComponentsInChildren<MeshFilter>(true)) Use(mf.sharedMesh);
                     foreach (var mc in root.GetComponentsInChildren<MeshCollider>(true)) Use(mc.sharedMesh);
-                    foreach (var cm in root.GetComponentsInChildren<CuttableMesh>(true)) { Use(cm.cutMesh); Use(cm.sourceMesh); }
+                    foreach (var cm in root.GetComponentsInChildren<CuttableMesh>(true)) { Use(cm.cutMesh); Use(cm.sourceMesh); Use(cm.originalMesh); }
                 }
             }
             for (int i = 0; i < SceneManager.sceneCount; i++) UseScene(SceneManager.GetSceneAt(i));
