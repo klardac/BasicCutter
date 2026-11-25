@@ -78,9 +78,11 @@ namespace BasicCutter.EditorTools
             }
             double extent = Math.Max(maxX - minX, maxY - minY);
             if (extent <= 0) return result;
-            double weldEps = extent * 1e-7;
+            // above float rounding of the input (about 1.2e-7 relative): parts that meet are one point
+            double weldEps = extent * 1e-6;
             double sideDelta = extent * 1e-5;
-            double simplifyEps = extent * 1e-6;
+            double simplifyEps = extent * 2e-6;
+            double collinearTol = weldEps * 4;
             double areaEps = extent * extent * 1e-12;
 
             // 1. weld and orient triangles
@@ -145,16 +147,18 @@ namespace BasicCutter.EditorTools
                     D2 s = q2 - q1;
                     double d = D2.Cross(r, s);
                     double sl2 = s.SqrMagnitude;
-                    if (Math.Abs(d) <= 1e-12 * Math.Sqrt(rl2 * sl2))
+                    // on one line (within rounding): decided by distance, not by angle, so two edges that are
+                    // a hair apart or a hair tilted still share their pieces. The overlap's endpoints split both.
+                    double rl = Math.Sqrt(rl2);
+                    if (Math.Abs(D2.Cross(r, q1 - p1)) / rl <= collinearTol && Math.Abs(D2.Cross(r, q2 - p1)) / rl <= collinearTol)
                     {
-                        // parallel: collinear overlap adds endpoints as split points
-                        if (Math.Abs(D2.Cross(r, q1 - p1)) / Math.Sqrt(rl2) > weldEps * 4) continue;
                         AddCollinear(i, edges[i].a, edges[i].b, qa, P, splits, tEps);
                         AddCollinear(i, edges[i].a, edges[i].b, qb, P, splits, tEps);
                         AddCollinear(j, qa, qb, edges[i].a, P, splits, tEps);
                         AddCollinear(j, qa, qb, edges[i].b, P, splits, tEps);
                         continue;
                     }
+                    if (Math.Abs(d) <= 1e-12 * Math.Sqrt(rl2 * sl2)) continue; // parallel, apart
                     D2 qp = q1 - p1;
                     double t = D2.Cross(qp, s) / d;
                     double u = D2.Cross(qp, r) / d;

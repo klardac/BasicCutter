@@ -638,6 +638,239 @@ namespace BasicCutter.Tests
             Assert.AreEqual(applied - DoorHole, WallVolumeOf(wall), 0.05, "old hole kept, the door cuts where it is now");
         }
 
+        // ------------------------------------------------------------------ split box colliders
+
+        static bool Blocks(Vector3 at)
+        {
+            Physics.SyncTransforms();
+            return Physics.Raycast(new Ray(at + Vector3.back * 2f, Vector3.forward), 4f);
+        }
+
+        static float BoxVolume(CutterColliders c) =>
+            c.GetComponents<BoxCollider>().Where(b => b.enabled).Sum(b => b.size.x * b.size.y * b.size.z);
+
+        [Test]
+        public void BoxCollider_IsSplitAroundTheOpening_AndComesBack()
+        {
+            var wall = MakeObject("Wall", ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+            var own = wall.AddComponent<BoxCollider>(); // fits the mesh: 4 x 3 x 0.3
+            var window = MakeWindow(new Vector3(0.5f, 1.6f, 0));
+            CutterSystem.SyncNow();
+
+            var split = wall.GetComponentInChildren<CutterColliders>();
+            Assert.IsNotNull(split, "split colliders created");
+            Assert.IsFalse(own.enabled, "the wall's own collider steps aside");
+            Assert.AreEqual(4, split.GetComponents<BoxCollider>().Length, "left, right, below, above");
+            Assert.AreEqual(WallVolume - HoleVolume, BoxVolume(split), 1e-3);
+            Assert.IsFalse(Blocks(new Vector3(0.5f, 1.6f, 0)), "the opening is free");
+            Assert.IsTrue(Blocks(new Vector3(-1.5f, 1.6f, 0)), "the wall still blocks");
+
+            window.transform.position = new Vector3(-1f, 1.6f, 0);
+            CutterSystem.SyncNow();
+            Assert.IsFalse(Blocks(new Vector3(-1f, 1.6f, 0)), "follows the window");
+            Assert.IsTrue(Blocks(new Vector3(0.5f, 1.6f, 0)));
+
+            window.transform.position = new Vector3(20f, 1.6f, 0);
+            CutterSystem.SyncNow();
+            Assert.IsTrue(own.enabled, "the wall's own collider is back");
+            Assert.IsNull(wall.GetComponentInChildren<CutterColliders>(), "split colliders removed");
+        }
+
+        [Test]
+        public void BoxCollider_Door_LeavesTheWayThroughFree()
+        {
+            var wall = MakeObject("Wall", ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+            wall.AddComponent<BoxCollider>();
+            var door = new GameObject("Door");
+            door.AddComponent<MeshCutter>().door = true;
+            MakeObject("Leaf", ProceduralMeshes.Box(new Vector3(1f, 2.2f, 0.1f), new Vector3(0, 1.1f, 0), "Leaf"), Vector3.zero, door.transform);
+            CutterSystem.SyncNow();
+            var split = wall.GetComponentInChildren<CutterColliders>();
+            Assert.AreEqual(3, split.GetComponents<BoxCollider>().Length, "left, right and above: nothing below a door");
+            Assert.IsFalse(Blocks(new Vector3(0, 0.1f, 0)), "free at the floor");
+            Assert.IsFalse(Blocks(new Vector3(0, 2.1f, 0)));
+            Assert.IsTrue(Blocks(new Vector3(0, 2.5f, 0)), "above the door");
+        }
+
+        [Test]
+        public void BoxCollider_AppliedCuts_KeepTheirOpening_AndDiscardRestores()
+        {
+            var wall = MakeObject("Wall", ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+            var own = wall.AddComponent<BoxCollider>();
+            var window = MakeWindow(new Vector3(-1f, 1.6f, 0));
+            CutterSystem.SyncNow();
+            var cm = wall.GetComponent<CuttableMesh>();
+            CutterSystem.ApplyCuts(new[] { cm });
+            Assert.IsTrue(cm.hasAppliedBoxes);
+
+            Object.DestroyImmediate(window);
+            CutterSystem.SyncNow();
+            Assert.IsFalse(Blocks(new Vector3(-1f, 1.6f, 0)), "the applied opening stays free");
+            Assert.IsFalse(own.enabled);
+
+            var second = MakeWindow(new Vector3(1f, 1.6f, 0));
+            CutterSystem.SyncNow();
+            Assert.IsFalse(Blocks(new Vector3(1f, 1.6f, 0)), "a new window opens on top of the applied boxes");
+            Assert.IsFalse(Blocks(new Vector3(-1f, 1.6f, 0)));
+
+            CutterSystem.DiscardAppliedCuts(new[] { cm });
+            Assert.IsTrue(Blocks(new Vector3(-1f, 1.6f, 0)), "back to the wall's own collider, minus live openings");
+            Assert.IsFalse(Blocks(new Vector3(1f, 1.6f, 0)));
+            Object.DestroyImmediate(second);
+            CutterSystem.SyncNow();
+            Assert.IsTrue(own.enabled);
+        }
+
+        [Test]
+        public void BoxCollider_SplitSetting_Off_KeepsTheWallsCollider()
+        {
+            BasicCutterSettings.instance.splitBoxColliders = false;
+            try
+            {
+                var wall = MakeObject("Wall", ProceduralMeshes.Box(new Vector3(4, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+                var own = wall.AddComponent<BoxCollider>();
+                MakeWindow(new Vector3(0.5f, 1.6f, 0));
+                CutterSystem.SyncNow();
+                Assert.IsTrue(own.enabled);
+                Assert.IsNull(wall.GetComponentInChildren<CutterColliders>());
+            }
+            finally { BasicCutterSettings.instance.splitBoxColliders = true; }
+        }
+
+        // ------------------------------------------------------------------ alignment
+
+        static OpeningAlignment.Extent ExtentX(GameObject w) => OpeningAlignment.Measure(w.GetComponent<MeshCutter>(), Vector3.right);
+
+        [Test]
+        public void Align_Bottoms_FollowTheActiveWindow_ByTheOpeningNotThePivot()
+        {
+            MakeObject("Wall", ProceduralMeshes.Box(new Vector3(6, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+            var a = MakeWindow(new Vector3(-2f, 1.2f, 0));
+            var b = MakeWindow(new Vector3(0f, 1.7f, 0));
+            var c = MakeWindow(new Vector3(2f, 1.5f, 0));
+            // a pivot that is not in the middle of the opening: the frame sits 0.3 above it
+            c.transform.GetChild(0).localPosition = new Vector3(0, 0.3f, 0);
+            CutterSystem.SyncNow();
+            float target = ExtentX(b).minY;
+
+            OpeningAlignment.AlignHeights(new[] { a, b, c }.Select(w => w.GetComponent<MeshCutter>()), b.GetComponent<MeshCutter>(), OpeningAlignment.Edge.Bottom);
+            Assert.AreEqual(target, ExtentX(a).minY, 1e-3);
+            Assert.AreEqual(target, ExtentX(b).minY, 1e-3, "the active window stays");
+            Assert.AreEqual(target, ExtentX(c).minY, 1e-3, "aligned by its opening");
+        }
+
+        [Test]
+        public void Align_DistributeEvenly_MakesEqualGaps_AndKeepsTheOuterOnes()
+        {
+            MakeObject("Wall", ProceduralMeshes.Box(new Vector3(6, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+            var a = MakeWindow(new Vector3(-2f, 1.5f, 0));
+            var b = MakeWindow(new Vector3(-0.4f, 1.5f, 0));
+            var c = MakeWindow(new Vector3(2f, 1.5f, 0));
+            CutterSystem.SyncNow();
+            OpeningAlignment.DistributeEvenly(new[] { c, a, b }.Select(w => w.GetComponent<MeshCutter>()));
+            Assert.AreEqual(-2f, a.transform.position.x, 1e-3);
+            Assert.AreEqual(2f, c.transform.position.x, 1e-3);
+            Assert.AreEqual(0f, b.transform.position.x, 1e-3, "the gaps are equal: 1 m each");
+            Assert.AreEqual(0f, b.transform.position.z, 1e-3, "still centred in the wall");
+        }
+
+        [Test]
+        public void Align_Spacing_AndBottomHeight()
+        {
+            MakeObject("Wall", ProceduralMeshes.Box(new Vector3(6, 3, 0.3f), Vector3.zero, "Wall"), new Vector3(0, 1.5f, 0));
+            var a = MakeWindow(new Vector3(-2f, 1.5f, 0));
+            var b = MakeWindow(new Vector3(0f, 1.6f, 0));
+            var c = MakeWindow(new Vector3(2f, 1.4f, 0));
+            CutterSystem.SyncNow();
+            var all = new[] { a, b, c }.Select(w => w.GetComponent<MeshCutter>()).ToList();
+
+            OpeningAlignment.SetSpacing(all, 0.25f);
+            Assert.AreEqual(-2f, a.transform.position.x, 1e-3, "the first stays");
+            Assert.AreEqual(-0.75f, b.transform.position.x, 1e-3, "1 m wide openings, 25 cm apart");
+            Assert.AreEqual(0.5f, c.transform.position.x, 1e-3);
+
+            CutterSystem.SyncNow();
+            OpeningAlignment.SetBottomHeight(all, 0.9f);
+            foreach (var w in new[] { a, b, c }) Assert.AreEqual(0.9f, ExtentX(w).minY, 1e-3, w.name + ": 90 cm above the wall's bottom");
+        }
+
+        [Test]
+        public void ExactOutline_DoorPartsThatMeetWithFloatRounding_GiveOneOutline()
+        {
+            // the demo door, not rotated: posts, lintel and leaf meet up to float rounding (about 2e-8),
+            // which used to leave the outline empty
+            var door = new GameObject("Door");
+            var cutter = door.AddComponent<MeshCutter>();
+            cutter.door = true;
+            var bar = ProceduralMeshes.Box(new Vector3(0.08f, 2.2f, 0.14f), Vector3.zero, "Door Post");
+            var top = ProceduralMeshes.Box(new Vector3(1.0f, 0.08f, 0.14f), Vector3.zero, "Door Lintel");
+            var leaf = ProceduralMeshes.Box(new Vector3(0.84f, 2.12f, 0.04f), Vector3.zero, "Door Leaf");
+            MakeObject("Post L", bar, new Vector3(-0.46f, 1.1f, 0), door.transform);
+            MakeObject("Post R", bar, new Vector3(0.46f, 1.1f, 0), door.transform);
+            MakeObject("Lintel", top, new Vector3(0, 2.16f, 0), door.transform);
+            MakeObject("Leaf", leaf, new Vector3(0, 1.06f, 0), door.transform);
+            var o = CutterShapeBuilder.Get(cutter);
+            Assert.IsTrue(o.IsValid, o.error);
+            Assert.AreEqual(1, o.loops.Count);
+            Assert.AreEqual(1.0 * 2.2, Poly2D.SignedArea(o.loops[0]), 1e-4, "one 1 m x 2.2 m outline");
+        }
+
+        [Test]
+        public void DemoGlass_IsSeenFromBothSides()
+        {
+            DemoScene.Build(TempFolder + "/Demo");
+            var pane = GameObject.Find("Rect Window").transform.Find("Glass");
+            var normals = pane.GetComponent<MeshFilter>().sharedMesh.normals;
+            Assert.IsTrue(normals.Any(n => n.z < -0.9f) && normals.Any(n => n.z > 0.9f), "faces on both sides");
+            var r = pane.GetComponent<MeshRenderer>();
+            var m = r.sharedMaterial;
+            Assert.GreaterOrEqual(m.renderQueue, (int)UnityEngine.Rendering.RenderQueue.Transparent, "drawn as transparent");
+            var color = m.HasProperty("_BaseColor") ? m.GetColor("_BaseColor") : m.color;
+            Assert.Less(color.a, 1f, "see-through");
+            Assert.Greater(color.b, color.r, "blue");
+            Assert.AreEqual(UnityEngine.Rendering.ShadowCastingMode.Off, r.shadowCastingMode);
+        }
+
+        // ------------------------------------------------------------------ place openings tool
+
+        [Test]
+        public void PlaceOpenings_Door_StandsOnTheWallBottom_AndCuts()
+        {
+            DemoScene.Build(TempFolder + "/Demo");
+            var wallA = GameObject.Find("Wall A").GetComponent<MeshFilter>();
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(TempFolder + "/Demo/Prefabs/Door.prefab");
+            Assert.IsTrue(PlaceOpeningsTool.IsOpeningPrefab(prefab));
+
+            var ray = new Ray(new Vector3(-1.3f, 1.2f, -5f), Vector3.forward);
+            Assert.IsTrue(PlaceOpeningsTool.Raycast(wallA, ray, out var point, out var normal, out bool cuttable));
+            Assert.IsTrue(cuttable);
+            Assert.AreEqual(-1f, normal.z, 1e-3, "the face the ray sees");
+            Assert.IsTrue(PlaceOpeningsTool.TryPose(prefab, wallA, point, normal, default, out var pos, out var rot));
+            var placed = PlaceOpeningsTool.Place(prefab, wallA, pos, rot, false);
+            CutterSystem.SyncNow();
+
+            Assert.AreEqual(-1.3f, placed.transform.position.x, 1e-3);
+            Assert.AreEqual(0f, placed.transform.position.y, 1e-3, "on the wall's bottom");
+            Assert.AreEqual(0f, placed.transform.position.z, 1e-3, "in the middle of the wall's thickness");
+            var st = CutterSystem.GetStatus(placed.GetComponent<MeshCutter>());
+            CollectionAssert.Contains(st.targets, wallA.GetComponent<Renderer>(), "it cuts Wall A");
+            Assert.IsEmpty(st.warnings);
+        }
+
+        [Test]
+        public void PlaceOpenings_Grid_SnapsAlongTheWall()
+        {
+            DemoScene.Build(TempFolder + "/Demo");
+            var wallA = GameObject.Find("Wall A").GetComponent<MeshFilter>();
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(TempFolder + "/Demo/Prefabs/Round Window.prefab");
+            var ray = new Ray(new Vector3(1.37f, 1.53f, -5f), Vector3.forward);
+            Assert.IsTrue(PlaceOpeningsTool.Raycast(wallA, ray, out var point, out var normal, out _));
+            var settings = new PlaceOpeningsTool.Settings { grid = true, gridStep = 0.25f };
+            Assert.IsTrue(PlaceOpeningsTool.TryPose(prefab, wallA, point, normal, settings, out var pos, out _));
+            Assert.AreEqual(1.25f, pos.x, 1e-3);
+            Assert.AreEqual(1.5f, pos.y, 1e-3);
+        }
+
         // ------------------------------------------------------------------ applied meshes in prefabs (Embedded)
 
         Mesh wallAsset, frameAsset;

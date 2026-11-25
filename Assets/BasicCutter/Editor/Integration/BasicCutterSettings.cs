@@ -39,6 +39,9 @@ namespace BasicCutter.EditorTools
         [Tooltip("Live update cuts large walls on a background thread, so the editor never stalls while dragging.")]
         public bool backgroundCutting = true;
 
+        [Tooltip("A cut wall's Box Colliders are replaced by boxes that leave its openings free (characters can walk through doors).")]
+        public bool splitBoxColliders = true;
+
         [Tooltip("When to generate lightmap UVs (UV2) for cut meshes.")]
         public LightmapUvMode lightmapUvs = LightmapUvMode.Auto;
 
@@ -87,6 +90,9 @@ namespace BasicCutter.EditorTools
                         s.backgroundCutting = EditorGUILayout.Toggle(new GUIContent("Background Cutting",
                             $"Large walls (from {CutterSystem.BackgroundThreshold} triangles) are cut on a worker thread while dragging."), s.backgroundCutting);
                     }
+                    bool split = EditorGUILayout.Toggle(new GUIContent("Split Box Colliders",
+                        "A cut wall's Box Colliders are replaced by boxes around its openings, so characters can walk through doors. Mesh Colliders always get the cut mesh."), s.splitBoxColliders);
+                    if (split != s.splitBoxColliders) { s.splitBoxColliders = split; CutterSystem.RebuildAllLater(); }
                     s.lightmapUvs = (LightmapUvMode)EditorGUILayout.EnumPopup(new GUIContent("Lightmap UVs", "Auto: when the original mesh has UV2 or the object is static for GI."), s.lightmapUvs);
                     s.showAllGizmos = EditorGUILayout.Toggle(new GUIContent("Show All Cutter Gizmos"), s.showAllGizmos);
                     s.gizmoColor = EditorGUILayout.ColorField("Gizmo Color", s.gizmoColor);

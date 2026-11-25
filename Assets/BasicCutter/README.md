@@ -1,6 +1,6 @@
 # Basic Cutter
 
-Sürüm 1.1.2 · [github.com/klardac/BasicCutter](https://github.com/klardac/BasicCutter) · Lisans: CC BY-NC 4.0 (bkz. `LICENSE.md`)
+Sürüm 1.2.0 · [github.com/klardac/BasicCutter](https://github.com/klardac/BasicCutter) · Lisans: CC BY-NC 4.0 (bkz. `LICENSE.md`)
 
 Unity 6 için level design aracı. Pencere ve kapıların duvarın içinde kalan kısmını keser ve deliğin iç yüzeylerini (pervazları) duvarın materyaliyle kapatır. Kesimler geri alınabilir: orijinal mesh her zaman saklanır.
 
@@ -10,16 +10,53 @@ Unity 6 için level design aracı. Pencere ve kapıların duvarın içinde kalan
 
 ## Kurulum
 
-1. `BasicCutter.unitypackage` dosyasını projeye sürükleyin veya **Assets > Import Package > Custom Package** ile içe aktarın.
-2. Ek paket gerekmez.
+- **Package Manager (önerilen, kolay güncellenir):** **Window > Package Manager > + > Install package from git URL...** ve şu adresi girin: `https://github.com/klardac/BasicCutter.git?path=/Assets/BasicCutter#v1.2.0`. Güncellemek için sondaki sürümü değiştirin.
+- **Veya .unitypackage:** `BasicCutter-v*.unitypackage` dosyasını **Assets > Import Package > Custom Package** ile içe aktarın.
+- İkisini aynı anda kullanmayın. Ek paket gerekmez.
 
 ## Hızlı başlangıç
 
-1. **Tools > Basic Cutter > Create Demo Scene** ile örnek sahneyi açın ve pencereleri sürükleyin.
+1. **Tools > Basic Cutter > Create Demo Scene** ile örnek sahneyi açın ve pencereleri sürükleyin. (Demo yeniden oluşturulunca materyalleri ve mesh'leri de güncellenir.)
 2. Kendi pencereniz için pencerenin kök objesini (tercihen prefab'ını) seçin ve **Add Component > Basic Cutter > Mesh Cutter** ekleyin (veya **Tools > Basic Cutter > Add Cutter To Selection**).
 3. Pencereyi duvarın içine yerleştirin. Duvar anında kesilir. **Snap To Wall** (Alt+Shift+W) pencereyi duvara oturtur ve duvar kalınlığında ortalar.
 
 Duvara bir şey eklemeniz gerekmez. Kesilen her duvara otomatik olarak `Cuttable Mesh` bileşeni eklenir. Pencere uzaklaştırılır, silinir veya devre dışı bırakılırsa duvar orijinal haline döner ve bileşen kaldırılır.
+
+## Duvara tıklayarak yerleştirme (Place Openings)
+
+**Tools > Basic Cutter > Place Openings** (veya Scene view'daki araç çubuğundan) yerleştirme aracını açar.
+
+1. Panelde **Prefab** alanına kökünde Mesh Cutter olan bir pencere veya kapı prefab'ı seçin. Araç açılırken Project penceresinde böyle bir prefab seçiliyse o kullanılır.
+2. Fareyle bir duvarın üzerine gelin. Açıklığın hattı yeşil gösterilir; duvar kesilemiyorsa (kapalı mesh değilse) kırmızı olur.
+3. Tıklayın. Prefab, açıklığın ortası tıklanan noktaya gelecek ve duvara bakacak şekilde yerleştirilir, duvar kalınlığında ortalanır. Kapılar duvarın altına oturur. Araç açık kalır; art arda yerleştirebilirsiniz.
+
+- **Grid:** Açıklığın ortasını duvar boyunca verilen adıma (metre) oturtur.
+- **Parent To Wall:** Yerleştirilen pencere duvarın alt objesi olur.
+- **F:** Pencerenin hangi yüze baktığını çevirir. **Esc:** Araçtan çıkar.
+- Her yerleştirme Ctrl+Z ile geri alınabilir.
+
+## Hizalama (Align)
+
+Mesh Cutter inspector'ındaki **Align** bölümü (birden fazla pencere seçiliyken açık gelir) ve **Tools > Basic Cutter > Align Openings** menüsü. Tüm hesaplar pencerenin pivotuna göre değil, **açıklığın gerçek kenarlarına** göre yapılır; bu yüzden farklı modeller de doğru hizalanır.
+
+| Komut | Ne yapar |
+|---|---|
+| **Edges: Bottoms / Middles / Tops** | Açıklıkların alt kenarını, ortasını veya üst kenarını aktif pencerenin (en son seçilenin) yüksekliğine getirir. |
+| **Distribute: Evenly** | En dıştaki iki pencere yerinde kalır; aradakiler, açıklıklar arasındaki boşluklar eşit olacak şekilde dağıtılır (en az 3 pencere). |
+| **Spacing** | Sıradaki ilk pencere yerinde kalır; diğerleri kenardan kenara verilen mesafeyle (cm) dizilir. |
+| **Bottom Height** | Her açıklığın alt kenarını kendi duvarının altından verilen yüksekliğe (cm) koyar; örneğin denizlik yüksekliği 90 cm. |
+
+- Sıra yönü, birbirinden en uzak iki pencereden bulunur. Kavisli duvarlarda pencereler taşındıktan sonra Snap To Wall ile yüzeye yeniden oturtulur.
+- Her komut tek bir Ctrl+Z ile geri alınır.
+
+## Collider'lar
+
+- **Mesh Collider:** Duvarın Mesh Collider'ı kesik mesh'i kullanır.
+- **Box Collider:** Kesilen duvarın Box Collider'ları, açıklıkları boş bırakan kutularla değiştirilir; karakterler kapıdan geçebilir. Kutular duvarın altında **"Colliders (Basic Cutter)"** adlı bir alt objede oluşturulur ve otomatik güncellenir. Duvarın kendi Box Collider'ları bu sırada kapatılır ve duvar artık kesilmediğinde geri açılır. Fizik materyali ve Is Trigger ayarı korunur.
+- Açıklık, kesim hacminin sınır kutusu kadar boşaltılır. Kemerli ve yuvarlak açıklıklarda köşelerde küçük boşluklar kalır; eğik yerleştirilmiş pencerelerde boşluk biraz daha büyüktür. Nişlerde arka kısım dolu kalır.
+- Apply Cuts collider'ları da işler. Discard Applied Cuts duvarın kendi collider'larına döner.
+- **Project Settings > Basic Cutter > Split Box Colliders** ile kapatılabilir.
+- **Strip Components** sonrasında bölünmüş kutular normal Box Collider olarak kalır.
 
 ## Mesh Cutter (pencere / kapı / niş)
 

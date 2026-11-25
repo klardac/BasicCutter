@@ -72,6 +72,13 @@ namespace BasicCutter
         [SerializeField, HideInInspector]
         internal List<Material> heldMaterials = new List<Material>();
 
+        // Apply Cuts with split box colliders: the boxes with the applied openings left out (wall space)
+        [SerializeField, HideInInspector]
+        internal List<ColliderBox> appliedBoxes = new List<ColliderBox>();
+
+        [SerializeField, HideInInspector]
+        internal bool hasAppliedBoxes;
+
         public Mesh SourceMesh => sourceMesh;
         public Mesh CutMesh => cutMesh;
         public CutState State => state;

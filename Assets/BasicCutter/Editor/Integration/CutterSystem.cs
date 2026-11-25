@@ -136,6 +136,14 @@ namespace BasicCutter.EditorTools
             FinalizeAll();
         }
 
+        /// <summary>Re-cuts every wall from scratch on the next update (from GUI code).</summary>
+        public static void RebuildAllLater()
+        {
+            forceAll = true;
+            MarkDirty();
+            EditorApplication.delayCall += () => { if (forceAll) SyncNow(); };
+        }
+
         static void Update()
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling) return;
@@ -194,7 +202,7 @@ namespace BasicCutter.EditorTools
         /// <summary>Tests: one sync as the live update runs it.</summary>
         internal static void SyncForTests(bool background) => SyncInternal(background);
 
-        static void MarkSceneDirty(GameObject go)
+        internal static void MarkSceneDirty(GameObject go)
         {
             var scene = go.scene;
             if (!scene.IsValid()) return;
@@ -222,6 +230,8 @@ namespace BasicCutter.EditorTools
                 };
                 cutterStatus.Clear();
                 wallCutters.Clear();
+                var splitColliders = stage.FindComponentsOfType<CutterColliders>().Where(c => c != null).ToList();
+                ColliderSplitter.CleanUpOrphans(splitColliders); // a wall whose Cuttable Mesh was removed
                 if (scope.cutters.Count == 0 && scope.walls.Count == 0 && scope.trims.Count == 0) return;
                 scope.renderers = scope.cutters.Count == 0 ? new List<MeshRenderer>() :
                     stage.FindComponentsOfType<MeshRenderer>().Where(r => r != null && r.enabled && r.gameObject.activeInHierarchy).ToList();
@@ -275,6 +285,7 @@ namespace BasicCutter.EditorTools
                 cm.originalMaterialCount = 0;
                 cm.addedMaterials = 0;
                 cm.appliedCutters.Clear();
+                ColliderSplitter.ForgetApplied(cm);
                 cm.cutBy.Clear();
                 cm.cutByKnown = false;
                 cm.cutMesh = null;
@@ -549,6 +560,7 @@ namespace BasicCutter.EditorTools
                 if (!cm.cutByKnown) SetCutBy(cm, placements.Select(p => p.cutter));
                 SetMaterials(cm, renderer, baseMaterials, extras);
                 foreach (var p in placements) RecordPrimary(scope, p, mf, sm);
+                UpdateColliders(cm, placements.Where(p => cm.cutBy.Contains(p.cutter)));
                 return;
             }
 
@@ -628,6 +640,20 @@ namespace BasicCutter.EditorTools
             SetCutBy(cm, Enumerable.Range(0, placements.Count).Where(i => result.cutterAffected[i]).Select(i => placements[i].cutter));
             MarkChanged(cm);
             pendingFinalize.Add(cm);
+            UpdateColliders(cm, Enumerable.Range(0, placements.Count).Where(i => result.cutterAffected[i]).Select(i => placements[i]));
+        }
+
+        /// <summary>Box colliders of the wall with these openings left out (only walls that have box colliders).</summary>
+        static void UpdateColliders(CuttableMesh cm, IEnumerable<Placement> openings)
+        {
+            if (!cm.hasAppliedBoxes && ColliderSplitter.Find(cm) == null && cm.GetComponent<BoxCollider>() == null) return;
+            var holes = new List<Bounds>();
+            foreach (var p in openings)
+            {
+                var volume = CutterPlacement.VolumeInWallSpace(p.outline, p.toWall, p.place.d0, p.place.d1, p.place.bottomShift);
+                if (volume.Count > 0) holes.Add(ColliderSplitter.HoleBounds(volume));
+            }
+            ColliderSplitter.Update(cm, holes);
         }
 
         static Material[] BaseMaterials(CuttableMesh cm, Renderer renderer)
@@ -773,6 +799,7 @@ namespace BasicCutter.EditorTools
                 cm.signature = "";
                 cm.state = CutState.Live;
                 cm.autoAdded = false;       // keep the component: it remembers the original mesh
+                ColliderSplitter.CaptureApplied(cm); // the split boxes become the base, like the mesh
                 MarkChanged(cm);
                 count++;
             }
@@ -831,6 +858,7 @@ namespace BasicCutter.EditorTools
                 cm.cutBy.Clear();
                 cm.cutByKnown = true;
                 cm.signature = "";
+                ColliderSplitter.ForgetApplied(cm);
                 if (cm.state == CutState.Frozen) cm.state = CutState.Live;
                 if (mf != null) SetMesh(mf, cm, cm.sourceMesh);
                 MarkChanged(cm);
@@ -893,6 +921,7 @@ namespace BasicCutter.EditorTools
 
         static void Restore(CuttableMesh cm, MeshFilter mf)
         {
+            UpdateColliders(cm, Array.Empty<Placement>()); // own colliders back (or the applied boxes)
             if (cm.addedMaterials > 0)
             {
                 var r = mf.GetComponent<Renderer>();
@@ -911,7 +940,7 @@ namespace BasicCutter.EditorTools
             if (!string.IsNullOrEmpty(cm.signature)) { cm.signature = ""; MarkChanged(cm); }
         }
 
-        static void MarkChanged(Object o)
+        internal static void MarkChanged(Object o)
         {
             EditorUtility.SetDirty(o);
             if (PrefabUtility.IsPartOfPrefabInstance(o)) PrefabUtility.RecordPrefabInstancePropertyModifications(o);

@@ -37,7 +37,7 @@ namespace BasicCutter.EditorTools
                 folder = folder,
                 wall = Mat(folder, "Wall", new Color(0.86f, 0.84f, 0.8f)),
                 frame = Mat(folder, "Frame", new Color(0.28f, 0.2f, 0.14f)),
-                glass = Mat(folder, "Glass", new Color(0.45f, 0.65f, 0.8f)),
+                glass = Glass(Mat(folder, "Glass", new Color(0.2f, 0.45f, 0.85f, 0.45f))),
                 floor = Mat(folder, "Floor", new Color(0.45f, 0.47f, 0.45f)),
                 door = Mat(folder, "Door", new Color(0.5f, 0.32f, 0.18f)),
                 trim = Mat(folder, "Trim", new Color(0.97f, 0.96f, 0.93f)),
@@ -136,7 +136,9 @@ namespace BasicCutter.EditorTools
             var innerD = new List<D2>();
             foreach (var p in inner) innerD.Add(new D2(p.x, p.y));
             var glass = ProceduralMeshes.ToVector2(Poly2D.Offset(innerD, 0.03));
-            Obj("Glass", MeshAsset(kit, ProceduralMeshes.Panel(glass, 0f, name + " Glass")), kit.glass, root.transform, Vector3.zero, Quaternion.identity);
+            // double sided: the glass is seen from inside the room too; see-through glass casts no shadow
+            var pane = Obj("Glass", MeshAsset(kit, ProceduralMeshes.Panel(glass, 0f, name + " Glass", doubleSided: true)), kit.glass, root.transform, Vector3.zero, Quaternion.identity);
+            pane.GetComponent<MeshRenderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             return SavePrefab(kit, root);
         }
 
@@ -211,6 +213,61 @@ namespace BasicCutter.EditorTools
             }
             if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", color);
             if (m.HasProperty("_Color")) m.SetColor("_Color", color);
+            EditorUtility.SetDirty(m);
+            return m;
+        }
+
+        /// <summary>
+        /// Makes the default material of the active pipeline alpha blended (its colour's alpha is the opacity)
+        /// and glossy: URP Lit, HDRP Lit or the Built-in Standard shader.
+        /// </summary>
+        static Material Glass(Material m)
+        {
+            const int Transparent = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            void Set(string p, float v) { if (m.HasProperty(p)) m.SetFloat(p, v); }
+            if (m.HasProperty("_Surface"))
+            {
+                // URP Lit
+                Set("_Surface", 1);                    // transparent
+                Set("_Blend", 0);                      // alpha
+                Set("_BlendModePreserveSpecular", 0);
+                Set("_AlphaClip", 0);
+                Set("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                Set("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                Set("_SrcBlendAlpha", (float)UnityEngine.Rendering.BlendMode.One);
+                Set("_DstBlendAlpha", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                Set("_ZWrite", 0);
+                Set("_Smoothness", 0.9f);
+                m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                m.DisableKeyword("_ALPHATEST_ON");
+                m.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+                m.SetShaderPassEnabled("DepthOnly", false);
+                m.SetShaderPassEnabled("ShadowCaster", false);
+            }
+            else if (m.HasProperty("_SurfaceType"))
+            {
+                // HDRP Lit: set the inputs, then let HDRP derive keywords and passes from them
+                Set("_SurfaceType", 1);
+                Set("_BlendMode", 0);
+                Set("_TransparentZWrite", 0);
+                Set("_Smoothness", 0.9f);
+                var hd = System.Type.GetType("UnityEngine.Rendering.HighDefinition.HDMaterial, Unity.RenderPipelines.HighDefinition.Runtime");
+                hd?.GetMethod("ValidateMaterial", new[] { typeof(Material) })?.Invoke(null, new object[] { m });
+            }
+            else if (m.HasProperty("_Mode"))
+            {
+                // Built-in Standard, "Transparent" mode
+                Set("_Mode", 3);
+                Set("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.One);
+                Set("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                Set("_ZWrite", 0);
+                Set("_Glossiness", 0.9f);
+                m.DisableKeyword("_ALPHATEST_ON");
+                m.DisableKeyword("_ALPHABLEND_ON");
+                m.EnableKeyword("_ALPHAPREMULTIPLY_ON");
+            }
+            m.SetOverrideTag("RenderType", "Transparent");
+            m.renderQueue = Transparent;
             EditorUtility.SetDirty(m);
             return m;
         }

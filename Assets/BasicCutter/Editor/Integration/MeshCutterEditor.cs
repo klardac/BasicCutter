@@ -162,6 +162,17 @@ namespace BasicCutter.EditorTools
 
             serializedObject.ApplyModifiedProperties();
 
+            // ---- align (moves objects: after the properties are applied)
+            System.Action align = null;
+            if (Section("Align", "Align", targets.Length > 1))
+                align = DrawAlign();
+            EndSection();
+            if (align != null)
+            {
+                align();
+                GUIUtility.ExitGUI(); // the windows moved: draw the next frame from scratch
+            }
+
             // ---- actions
             EditorGUILayout.Space(4);
             using (new EditorGUILayout.HorizontalScope())
@@ -178,6 +189,59 @@ namespace BasicCutter.EditorTools
                 if (GUILayout.Button(new GUIContent("Unbake Walls", "Let the walls this window cuts update live again.")))
                     SetState(CutState.Live, "Unbake Walls");
             }
+        }
+
+        // ------------------------------------------------------------------ align
+
+        const string SpacingPref = "BasicCutter.Align.SpacingCm", HeightPref = "BasicCutter.Align.HeightCm";
+
+        /// <summary>Draws the Align section; returns the action of the button that was pressed (run after the section ends).</summary>
+        System.Action DrawAlign()
+        {
+            var cutters = targets.Cast<MeshCutter>().ToList();
+            var active = Selection.activeGameObject != null ? Selection.activeGameObject.GetComponentInParent<MeshCutter>() : null;
+            if (active == null || !cutters.Contains(active)) active = cutters[0];
+            System.Action action = null;
+
+            using (new EditorGUI.DisabledScope(cutters.Count < 2))
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.PrefixLabel(new GUIContent("Edges", "Moves the openings up or down so this edge is at the height of the active window's opening."));
+                if (GUILayout.Button(new GUIContent("Bottoms", "Same sill height as the active window."), EditorStyles.miniButtonLeft))
+                    action = () => OpeningAlignment.AlignHeights(cutters, active, OpeningAlignment.Edge.Bottom);
+                if (GUILayout.Button(new GUIContent("Middles"), EditorStyles.miniButtonMid))
+                    action = () => OpeningAlignment.AlignHeights(cutters, active, OpeningAlignment.Edge.Middle);
+                if (GUILayout.Button(new GUIContent("Tops", "Same head height as the active window."), EditorStyles.miniButtonRight))
+                    action = () => OpeningAlignment.AlignHeights(cutters, active, OpeningAlignment.Edge.Top);
+            }
+            using (new EditorGUI.DisabledScope(cutters.Count < 3))
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.PrefixLabel(new GUIContent("Distribute", "Keeps the two outer openings and makes all gaps between openings equal (along the wall)."));
+                if (GUILayout.Button("Evenly", EditorStyles.miniButton)) action = () => OpeningAlignment.DistributeEvenly(cutters);
+            }
+            using (new EditorGUI.DisabledScope(cutters.Count < 2))
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.PrefixLabel(new GUIContent("Spacing", "Keeps the first opening of the row and puts the others this far apart, edge to edge."));
+                float gap = EditorGUILayout.FloatField(EditorPrefs.GetFloat(SpacingPref, 100f), GUILayout.MinWidth(40));
+                EditorPrefs.SetFloat(SpacingPref, Mathf.Max(0, gap));
+                GUILayout.Label("cm", GUILayout.Width(22));
+                if (GUILayout.Button("Apply", EditorStyles.miniButton, GUILayout.Width(50)))
+                    action = () => OpeningAlignment.SetSpacing(cutters, EditorPrefs.GetFloat(SpacingPref, 100f) / 100f);
+            }
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.PrefixLabel(new GUIContent("Bottom Height", "Puts the bottom of each opening this high above the bottom of its wall (a sill height)."));
+                float h = EditorGUILayout.FloatField(EditorPrefs.GetFloat(HeightPref, 90f), GUILayout.MinWidth(40));
+                EditorPrefs.SetFloat(HeightPref, h);
+                GUILayout.Label("cm", GUILayout.Width(22));
+                if (GUILayout.Button("Apply", EditorStyles.miniButton, GUILayout.Width(50)))
+                    action = () => OpeningAlignment.SetBottomHeight(cutters, EditorPrefs.GetFloat(HeightPref, 90f) / 100f);
+            }
+            if (cutters.Count > 1)
+                EditorGUILayout.LabelField($"Heights follow the active window: {active.name}. Edges are the opening's, not the pivot's.", richMini);
+            return action;
         }
 
         // ------------------------------------------------------------------ type

@@ -16,13 +16,24 @@ An editor-only level design tool for Unity 6. Place a window, door or niche into
 - **Fast:** only the region around the cutter is recomputed, and large walls are cut on a background thread.
 - **Clean results:** the mesh stays watertight, and normals, UVs and materials are preserved.
 - **Storage:** cut meshes are embedded in the scene or prefab by default, so no extra files are needed.
+- **Colliders:** Mesh Colliders get the cut mesh, and Box Colliders are split into boxes around the openings, so characters can walk through doors.
+- **Place Openings tool:** click on a wall to place a window or door prefab, aligned to the wall and centred in its thickness.
+- **Align:** align openings by their sill / middle / head, distribute them evenly, space them, or set a sill height above the wall's bottom, by the edges of the openings, not the pivots.
 - **Bake and Apply Cuts:** freeze a wall, or apply its current holes into its mesh so they stay when windows move or are deleted while new windows keep cutting on top.
 
 ## Install
 
-1. Download `BasicCutter-v*.unitypackage` from the [latest release](https://github.com/klardac/BasicCutter/releases/latest).
-2. In Unity: **Assets > Import Package > Custom Package...** and import it. No other packages are required.
-3. Try **Tools > Basic Cutter > Create Demo Scene**, or add **Basic Cutter > Mesh Cutter** to your window prefab and move it into a wall.
+**Package Manager (recommended, easy to update):** **Window > Package Manager > + > Install package from git URL...** and enter:
+
+```
+https://github.com/klardac/BasicCutter.git?path=/Assets/BasicCutter#v1.2.0
+```
+
+Change the version at the end to update (see [releases](https://github.com/klardac/BasicCutter/releases)), or leave out `#v1.2.0` to follow the latest commit.
+
+**Or as a .unitypackage:** download `BasicCutter-v*.unitypackage` from the [latest release](https://github.com/klardac/BasicCutter/releases/latest) and import it with **Assets > Import Package > Custom Package...**. Do not use both at the same time.
+
+Then try **Tools > Basic Cutter > Create Demo Scene**, or add **Basic Cutter > Mesh Cutter** to your window prefab and move it into a wall, or place window prefabs by clicking on walls with **Tools > Basic Cutter > Place Openings**.
 
 Requires Unity 6 (tested with 6000.3). Walls must be closed (watertight) meshes. Imported models need **Read/Write** enabled.
 

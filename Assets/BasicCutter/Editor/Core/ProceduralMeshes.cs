@@ -86,7 +86,8 @@ namespace BasicCutter.EditorTools
         }
 
         /// <summary>Single-sided flat panel (not closed) filling a convex loop, e.g. glass.</summary>
-        public static Mesh Panel(List<Vector2> loop, float z, string name = "Glass")
+        /// <summary>A flat panel (glass). Double sided: a second face looks the other way, so it is seen from both sides.</summary>
+        public static Mesh Panel(List<Vector2> loop, float z, string name = "Glass", bool doubleSided = false)
         {
             var b = new TriBuilder();
             Vector2 c = Vector2.zero;
@@ -96,6 +97,7 @@ namespace BasicCutter.EditorTools
             {
                 var p = loop[i]; var q = loop[(i + 1) % loop.Count];
                 b.Tri(new Vector3(c.x, c.y, z), new Vector3(p.x, p.y, z), new Vector3(q.x, q.y, z), Vector3.back);
+                if (doubleSided) b.Tri(new Vector3(c.x, c.y, z), new Vector3(q.x, q.y, z), new Vector3(p.x, p.y, z), Vector3.forward);
             }
             return b.ToMesh(name);
         }

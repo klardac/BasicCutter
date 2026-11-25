@@ -66,10 +66,11 @@ namespace BasicCutter.EditorTools
             var walls = StageWalls();
             var cutters = StageUtility.GetCurrentStageHandle().FindComponentsOfType<MeshCutter>().Where(c => c != null).ToArray();
             var trims = StageUtility.GetCurrentStageHandle().FindComponentsOfType<CutterTrim>().Where(c => c != null).ToArray();
+            var colliders = StageUtility.GetCurrentStageHandle().FindComponentsOfType<CutterColliders>().Where(c => c != null).ToArray();
             if (walls.Length == 0 && cutters.Length == 0) return;
             if (!EditorUtility.DisplayDialog("Strip Basic Cutter Components",
                     $"Removes {walls.Length} Cuttable Mesh and {cutters.Length} Mesh Cutter components from the open scene(s). " +
-                    "Walls keep their cut meshes and trims stay as plain meshes, but windows will no longer update them. This can be undone with Ctrl+Z.",
+                    "Walls keep their cut meshes, trims stay as plain meshes and split colliders as plain Box Colliders, but windows will no longer update them. This can be undone with Ctrl+Z.",
                     "Strip", "Cancel")) return;
             CutterSystem.FinalizeAll();
             Undo.SetCurrentGroupName("Strip Basic Cutter Components");
@@ -77,6 +78,7 @@ namespace BasicCutter.EditorTools
             foreach (var w in walls) Undo.DestroyObjectImmediate(w);
             foreach (var c in cutters) Undo.DestroyObjectImmediate(c);
             foreach (var t in trims) Undo.DestroyObjectImmediate(t);
+            foreach (var c in colliders) Undo.DestroyObjectImmediate(c); // the boxes stay, only the marker goes
             Undo.CollapseUndoOperations(group);
         }
 

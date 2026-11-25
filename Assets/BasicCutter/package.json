@@ -1,0 +1,27 @@
+{
+  "name": "com.klardac.basiccutter",
+  "version": "1.2.0",
+  "displayName": "Basic Cutter",
+  "description": "Editor-only level design tool: windows, doors and niches cut their exact shape out of wall meshes. The opening's inner faces are filled, trims and sills are generated, box colliders are split around openings, and every cut can be reverted. Works with the Built-in pipeline, URP and HDRP, prefabs and curved walls.",
+  "unity": "6000.0",
+  "documentationUrl": "https://github.com/klardac/BasicCutter#readme",
+  "changelogUrl": "https://github.com/klardac/BasicCutter/releases",
+  "licensesUrl": "https://github.com/klardac/BasicCutter/blob/main/LICENSE.md",
+  "license": "CC-BY-NC-4.0",
+  "keywords": [
+    "level design",
+    "boolean",
+    "csg",
+    "wall",
+    "window",
+    "door",
+    "mesh"
+  ],
+  "author": {
+    "name": "klardac",
+    "url": "https://github.com/klardac"
+  },
+  "dependencies": {
+    "com.unity.modules.physics": "1.0.0"
+  }
+}

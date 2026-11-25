@@ -82,6 +82,15 @@ namespace BasicCutter.EditorTools
                 }
                 catch (System.Exception e) { EditorGUILayout.HelpBox(e.Message, MessageType.Error); }
             }
+            var split = ColliderSplitter.Find(cm);
+            if (split != null)
+            {
+                int boxes = split.GetComponents<BoxCollider>().Count(b => b.enabled);
+                int own = split.replaced.Count(b => b != null);
+                EditorGUILayout.LabelField("Colliders", own > 0
+                    ? $"{boxes} boxes around the openings (replace {own} Box Collider{(own == 1 ? "" : "s")})"
+                    : $"{boxes} boxes around the openings");
+            }
             var cutters = CutterSystem.GetCutters(cm);
             if (cutters.Count > 0)
             {
